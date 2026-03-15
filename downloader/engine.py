@@ -1,9 +1,10 @@
 """
 yt-dlp download engine: MP3 (320 kbps) or MP4 video at selected quality.
-Supports per-track progress, success/failure tracking, and retry of failed items.
+Supports per-track progress, success/failure tracking, retry, and parallel downloads.
 """
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from queue import Queue, Empty
 from typing import List, Optional, Callable
@@ -144,15 +145,19 @@ def extract_playlist_info(url: str) -> PlaylistResult:
     return result
 
 
-def download_tracks(
-    tracks: List[TrackInfo],
+DEFAULT_WORKERS = 3
+MAX_WORKERS = 8
+
+
+def _download_single_track(
+    track: TrackInfo,
     output_dir: str,
     format_type: str,
     quality_name: str,
     message_queue: Queue,
-    playlist_result: PlaylistResult,
+    total: int,
 ):
-    """Download a list of tracks one by one, putting status messages on the queue."""
+    """Download one track. Called from the thread pool."""
 
     class QuietLogger:
         def debug(self, msg): pass
@@ -160,39 +165,73 @@ def download_tracks(
         def warning(self, msg): pass
         def error(self, msg): pass
 
-    for track in tracks:
-        track.status = "downloading"
-        message_queue.put((MSG_TRACK_START, track))
+    track.status = "downloading"
+    message_queue.put((MSG_TRACK_START, track))
 
-        def progress_hook(d, _track=track):
-            if d.get("status") == "downloading":
-                pct = d.get("_percent_str", "").strip()
-                speed = d.get("_speed_str", "").strip()
-                eta = d.get("_eta_str", "").strip()
-                if pct:
-                    msg = f"  [{_track.index}/{playlist_result.total}] {pct}"
-                    if speed:
-                        msg += f" at {speed}"
-                    if eta:
-                        msg += f" ETA {eta}"
-                    message_queue.put((MSG_TRACK_PROGRESS, msg))
+    def progress_hook(d):
+        if d.get("status") == "downloading":
+            pct = d.get("_percent_str", "").strip()
+            speed = d.get("_speed_str", "").strip()
+            eta = d.get("_eta_str", "").strip()
+            if pct:
+                msg = f"  [{track.index}/{total}] {pct}"
+                if speed:
+                    msg += f" at {speed}"
+                if eta:
+                    msg += f" ETA {eta}"
+                message_queue.put((MSG_TRACK_PROGRESS, msg))
 
-        opts = _build_ydl_opts(
-            format_type, quality_name, output_dir,
-            logger=QuietLogger(),
-            progress_hooks=[progress_hook],
-        )
-        opts["noplaylist"] = True
+    opts = _build_ydl_opts(
+        format_type, quality_name, output_dir,
+        logger=QuietLogger(),
+        progress_hooks=[progress_hook],
+    )
+    opts["noplaylist"] = True
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([track.url])
-            track.status = "done"
-            message_queue.put((MSG_TRACK_DONE, track))
-        except Exception as e:
-            track.status = "failed"
-            track.error = str(e)
-            message_queue.put((MSG_TRACK_FAILED, track))
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([track.url])
+        track.status = "done"
+        message_queue.put((MSG_TRACK_DONE, track))
+    except Exception as e:
+        track.status = "failed"
+        track.error = str(e)
+        message_queue.put((MSG_TRACK_FAILED, track))
+
+
+def download_tracks(
+    tracks: List[TrackInfo],
+    output_dir: str,
+    format_type: str,
+    quality_name: str,
+    message_queue: Queue,
+    playlist_result: PlaylistResult,
+    max_workers: int = DEFAULT_WORKERS,
+):
+    """Download tracks in parallel using a thread pool."""
+    workers = max(1, min(max_workers, MAX_WORKERS))
+
+    if workers == 1 or len(tracks) == 1:
+        for track in tracks:
+            _download_single_track(
+                track, output_dir, format_type, quality_name,
+                message_queue, playlist_result.total,
+            )
+        return
+
+    message_queue.put((MSG_LOG, f"Downloading with {workers} parallel workers..."))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                _download_single_track,
+                track, output_dir, format_type, quality_name,
+                message_queue, playlist_result.total,
+            ): track
+            for track in tracks
+        }
+        for future in as_completed(futures):
+            future.result()  # propagates any unexpected exception
 
 
 def start_download(
@@ -200,9 +239,10 @@ def start_download(
     output_dir: str,
     format_type: str,
     quality_name: str,
+    max_workers: int = DEFAULT_WORKERS,
 ) -> tuple:
     """
-    High-level download entry point. Returns (message_queue, playlist_result).
+    High-level download entry point. Returns (message_queue, None).
     Caller should poll message_queue for updates.
     """
     message_queue = Queue()
@@ -229,12 +269,12 @@ def start_download(
 
         os.makedirs(output_dir, exist_ok=True)
         download_tracks(result.tracks, output_dir, format_type, quality_name,
-                        message_queue, result)
+                        message_queue, result, max_workers=max_workers)
         message_queue.put((MSG_FINISHED, result))
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    return message_queue, None  # second value reserved
+    return message_queue, None
 
 
 def retry_failed(
@@ -242,6 +282,7 @@ def retry_failed(
     output_dir: str,
     format_type: str,
     quality_name: str,
+    max_workers: int = DEFAULT_WORKERS,
 ) -> Queue:
     """Retry only the failed tracks. Returns a message_queue to poll."""
     message_queue = Queue()
@@ -259,7 +300,7 @@ def retry_failed(
 
     def run():
         download_tracks(failed, output_dir, format_type, quality_name,
-                        message_queue, playlist_result)
+                        message_queue, playlist_result, max_workers=max_workers)
         message_queue.put((MSG_FINISHED, playlist_result))
 
     thread = threading.Thread(target=run, daemon=True)

@@ -17,6 +17,7 @@ from downloader import (
     PlaylistResult, TrackInfo,
     MSG_PLAYLIST_INFO, MSG_TRACK_START, MSG_TRACK_PROGRESS,
     MSG_TRACK_DONE, MSG_TRACK_FAILED, MSG_LOG, MSG_FINISHED,
+    DEFAULT_WORKERS, MAX_WORKERS,
 )
 
 
@@ -89,6 +90,18 @@ class MainWindow:
         ttk.Entry(out_frame, textvariable=self.out_var, width=60).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         ttk.Button(out_frame, text="Browse...", command=self._browse_output).pack(side=tk.LEFT)
+
+        # Parallel downloads
+        parallel_frame = ttk.Frame(main)
+        parallel_frame.pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(parallel_frame, text="Parallel downloads:").pack(side=tk.LEFT, padx=(0, 8))
+        self.workers_var = tk.IntVar(value=DEFAULT_WORKERS)
+        self.workers_spin = ttk.Spinbox(
+            parallel_frame, from_=1, to=MAX_WORKERS,
+            textvariable=self.workers_var, width=4, state="readonly")
+        self.workers_spin.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(parallel_frame, text=f"(1 = sequential, up to {MAX_WORKERS})",
+                  foreground="gray").pack(side=tk.LEFT)
 
         # Buttons row
         btn_frame = ttk.Frame(main)
@@ -193,6 +206,7 @@ class MainWindow:
             output_dir=out_dir,
             format_type=self.format_var.get(),
             quality_name=self.quality_var.get(),
+            max_workers=self.workers_var.get(),
         )
         self._poll_queue()
 
@@ -209,6 +223,7 @@ class MainWindow:
             output_dir=self.out_var.get().strip(),
             format_type=self.format_var.get(),
             quality_name=self.quality_var.get(),
+            max_workers=self.workers_var.get(),
         )
         self._poll_queue()
 

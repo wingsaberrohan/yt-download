@@ -17,6 +17,8 @@ from .engine import (
     MSG_TRACK_FAILED,
     MSG_LOG,
     MSG_FINISHED,
+    DEFAULT_WORKERS,
+    MAX_WORKERS,
 )
 
 __all__ = [
@@ -38,4 +40,6 @@ __all__ = [
     "MSG_TRACK_FAILED",
     "MSG_LOG",
     "MSG_FINISHED",
+    "DEFAULT_WORKERS",
+    "MAX_WORKERS",
 ]
