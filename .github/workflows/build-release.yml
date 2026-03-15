@@ -1,0 +1,141 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .exe
+        run: |
+          pyinstaller --onefile --windowed --name YT-Downloader --hidden-import yt_dlp --hidden-import imageio_ffmpeg main.py
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-Downloader-Windows
+          path: dist/YT-Downloader.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .app bundle
+        run: |
+          pyinstaller --onefile --windowed --name YT-Downloader --hidden-import yt_dlp --hidden-import imageio_ffmpeg main.py
+          # PyInstaller with --windowed on macOS creates a .app inside dist/
+          # If only an executable was created, wrap it manually
+          if [ ! -d "dist/YT-Downloader.app" ]; then
+            mkdir -p "dist/YT-Downloader.app/Contents/MacOS"
+            cp dist/YT-Downloader "dist/YT-Downloader.app/Contents/MacOS/YT-Downloader"
+            cat > "dist/YT-Downloader.app/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>YT Downloader</string>
+              <key>CFBundleDisplayName</key>
+              <string>YouTube MP3/MP4 Downloader</string>
+              <key>CFBundleExecutable</key>
+              <string>YT-Downloader</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.wingsaberrohan.yt-downloader</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          fi
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create .dmg
+        run: |
+          create-dmg \
+            --volname "YT Downloader" \
+            --window-pos 200 120 \
+            --window-size 480 360 \
+            --icon "YT-Downloader.app" 120 180 \
+            --app-drop-link 360 180 \
+            "dist/YT-Downloader.dmg" \
+            "dist/YT-Downloader.app" \
+          || true
+          # Fallback: if create-dmg fails, use hdiutil directly
+          if [ ! -f "dist/YT-Downloader.dmg" ]; then
+            hdiutil create -volname "YT Downloader" -srcfolder "dist/YT-Downloader.app" -ov -format UDZO "dist/YT-Downloader.dmg"
+          fi
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-Downloader-macOS
+          path: dist/YT-Downloader.dmg
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Release ${{ github.ref_name }}"
+          body: |
+            ## Downloads
+
+            | Platform | File |
+            |----------|------|
+            | Windows  | `YT-Downloader.exe` |
+            | macOS    | `YT-Downloader.dmg` |
+
+            ### How to use
+            1. Download the file for your OS
+            2. **Windows**: Run `YT-Downloader.exe` (no install needed)
+            3. **macOS**: Open `YT-Downloader.dmg`, drag the app to Applications
+            4. FFmpeg is bundled automatically — no separate install required
+          files: |
+            artifacts/YT-Downloader-Windows/YT-Downloader.exe
+            artifacts/YT-Downloader-macOS/YT-Downloader.dmg
+          draft: false
+          prerelease: false

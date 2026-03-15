@@ -2,12 +2,27 @@
 
 A simple desktop app to download YouTube videos or playlists as **MP3 (320 kbps)** or **MP4 video** (4K, 1080p, 720p, etc.) using [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg. Works on Windows, macOS, and Linux.
 
-## Requirements
+## Download (no install needed)
+
+Pre-built binaries are available on the [Releases](https://github.com/wingsaberrohan/yt-download/releases) page:
+
+| Platform | File | How to use |
+|----------|------|------------|
+| Windows  | `YT-Downloader.exe` | Just run it — no install needed |
+| macOS    | `YT-Downloader.dmg` | Open the DMG, drag the app to Applications |
+
+FFmpeg is bundled automatically. No Python or extra setup required.
+
+---
+
+## Run from source (developers)
+
+### Requirements
 
 - **Python 3.8+**
 - Nothing else — FFmpeg is included via the `imageio-ffmpeg` package (downloaded automatically on first run).
 
-## Setup and run
+### Setup and run
 
 1. Open a terminal in the project folder.
 2. Install dependencies (this installs yt-dlp and the FFmpeg bundle):
@@ -57,13 +72,17 @@ The app will use your FFmpeg if it finds it (local folder or PATH) before fallin
 - **Single video**: Paste the normal watch URL; one file will be created.
 - If a video doesn’t have the chosen resolution (e.g. no 4K), yt-dlp will pick the best available up to that cap.
 
-## Summary
+## Features
 
-| Feature        | Support                          |
-|----------------|-----------------------------------|
-| Output formats | MP3 (320 kbps), MP4 (video)       |
-| Video quality  | Best, 4K, 1080p, 720p, 480p, 360p |
-| Single video   | Yes                               |
-| Playlists      | Yes                               |
+| Feature             | Details                                       |
+|---------------------|-----------------------------------------------|
+| Output formats      | MP3 (320 kbps), MP4 (video)                   |
+| Video quality       | Best, 4K, 1080p, 720p, 480p, 360p             |
+| Single video        | Yes                                           |
+| Playlists           | Yes, with per-track progress and summary       |
+| Parallel downloads  | 1-8 concurrent tracks (default: 3)            |
+| Retry failed        | One-click retry for only the failed tracks     |
+| Summary report      | Shows succeeded/failed tracks with errors      |
+| Platforms           | Windows (.exe), macOS (.dmg), or run from source |
 
 All processing is done locally; no account or API key is required.
