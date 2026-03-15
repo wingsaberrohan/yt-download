@@ -1,0 +1,32 @@
+# Local FFmpeg (users add their own per README)
+ffmpeg/
+ffmpeg*.7z
+ffmpeg*.zip
+*.7z
+
+# Downloads output
+downloads/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
