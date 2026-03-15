@@ -1,13 +1,14 @@
 """
-yt-dlp download engine: MP3 (320 kbps) or MP4 video at selected quality.
-Supports per-track progress, success/failure tracking, retry, and parallel downloads.
+yt-dlp download engine: audio (multiple formats) or MP4 video at selected quality.
+Supports per-track progress, success/failure tracking, retry, parallel downloads,
+and cancellation.
 """
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from queue import Queue, Empty
-from typing import List, Optional, Callable
+from typing import List, Optional
 
 import yt_dlp
 
@@ -20,6 +21,16 @@ MP4_QUALITIES = [
     ("360p", "bestvideo[height<=360]+bestaudio/best[height<=360]"),
 ]
 
+AUDIO_FORMATS = [
+    ("MP3 - 320 kbps", "mp3", "320"),
+    ("MP3 - 192 kbps", "mp3", "192"),
+    ("AAC - 256 kbps", "aac", "256"),
+    ("FLAC (lossless)", "flac", "0"),
+    ("WAV (lossless)", "wav", "0"),
+    ("OGG - 256 kbps", "vorbis", "256"),
+]
+
+FORMAT_AUDIO = "audio"
 FORMAT_MP3 = "mp3"
 FORMAT_MP4 = "mp4"
 
@@ -29,7 +40,7 @@ class TrackInfo:
     url: str
     title: str = ""
     index: int = 0
-    status: str = "pending"  # pending | downloading | done | failed
+    status: str = "pending"
     error: str = ""
 
 
@@ -52,15 +63,18 @@ class PlaylistResult:
         return [t for t in self.tracks if t.status == "failed"]
 
 
-# ---------- message types for the GUI queue ----------
+MSG_PLAYLIST_INFO = "playlist_info"
+MSG_TRACK_START = "track_start"
+MSG_TRACK_PROGRESS = "track_progress"
+MSG_TRACK_PERCENT = "track_percent"
+MSG_TRACK_DONE = "track_done"
+MSG_TRACK_FAILED = "track_failed"
+MSG_LOG = "log"
+MSG_FINISHED = "finished"
 
-MSG_PLAYLIST_INFO = "playlist_info"    # (MSG_PLAYLIST_INFO, PlaylistResult)
-MSG_TRACK_START = "track_start"        # (MSG_TRACK_START, TrackInfo)
-MSG_TRACK_PROGRESS = "track_progress"  # (MSG_TRACK_PROGRESS, str)
-MSG_TRACK_DONE = "track_done"          # (MSG_TRACK_DONE, TrackInfo)
-MSG_TRACK_FAILED = "track_failed"      # (MSG_TRACK_FAILED, TrackInfo)
-MSG_LOG = "log"                        # (MSG_LOG, str)
-MSG_FINISHED = "finished"              # (MSG_FINISHED, PlaylistResult)
+
+class _DownloadCancelled(Exception):
+    pass
 
 
 def get_quality_format_string(quality_name: str) -> str:
@@ -70,11 +84,48 @@ def get_quality_format_string(quality_name: str) -> str:
     return MP4_QUALITIES[0][1]
 
 
-def _build_ydl_opts(format_type: str, quality_name: str, output_dir: str,
-                    logger=None, progress_hooks=None) -> dict:
+def get_audio_format(audio_format_name: str) -> tuple:
+    """Return (codec, quality) for the given audio format label."""
+    for name, codec, quality in AUDIO_FORMATS:
+        if name == audio_format_name:
+            return codec, quality
+    return AUDIO_FORMATS[0][1], AUDIO_FORMATS[0][2]
+
+
+def _format_speed(speed_bytes: Optional[float]) -> str:
+    if speed_bytes is None or speed_bytes <= 0:
+        return ""
+    if speed_bytes >= 1_048_576:
+        return f"{speed_bytes / 1_048_576:.1f} MB/s"
+    if speed_bytes >= 1024:
+        return f"{speed_bytes / 1024:.0f} KB/s"
+    return f"{speed_bytes:.0f} B/s"
+
+
+def _build_ydl_opts(
+    format_type: str,
+    quality_name: str,
+    output_dir: str,
+    audio_format_name: str = "",
+    logger=None,
+    progress_hooks=None,
+) -> dict:
     out_tmpl = output_dir.replace("\\", "/").rstrip("/") + "/%(title)s.%(ext)s"
 
-    if format_type == FORMAT_MP3:
+    if format_type == FORMAT_AUDIO:
+        codec, quality = get_audio_format(audio_format_name)
+        opts = {
+            "format": "bestaudio/best",
+            "outtmpl": out_tmpl,
+            "extract_audio": True,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": codec,
+                "preferredquality": quality,
+            }],
+            "merge_output_format": None,
+        }
+    elif format_type == FORMAT_MP3:
         opts = {
             "format": "bestaudio/best",
             "outtmpl": out_tmpl,
@@ -156,8 +207,15 @@ def _download_single_track(
     quality_name: str,
     message_queue: Queue,
     total: int,
+    cancel_event: threading.Event = None,
+    audio_format_name: str = "",
 ):
     """Download one track. Called from the thread pool."""
+    if cancel_event and cancel_event.is_set():
+        track.status = "failed"
+        track.error = "Cancelled"
+        message_queue.put((MSG_TRACK_FAILED, track))
+        return
 
     class QuietLogger:
         def debug(self, msg): pass
@@ -169,20 +227,34 @@ def _download_single_track(
     message_queue.put((MSG_TRACK_START, track))
 
     def progress_hook(d):
+        if cancel_event and cancel_event.is_set():
+            raise _DownloadCancelled("Download cancelled by user")
+
         if d.get("status") == "downloading":
+            downloaded = d.get("downloaded_bytes", 0) or 0
+            total_bytes = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            speed = d.get("speed")
+            speed_str = _format_speed(speed)
+
+            pct_float = 0.0
+            if total_bytes > 0:
+                pct_float = min(downloaded / total_bytes, 1.0)
+
+            message_queue.put((MSG_TRACK_PERCENT, (track.index, pct_float, speed_str)))
+
             pct = d.get("_percent_str", "").strip()
-            speed = d.get("_speed_str", "").strip()
             eta = d.get("_eta_str", "").strip()
             if pct:
                 msg = f"  [{track.index}/{total}] {pct}"
-                if speed:
-                    msg += f" at {speed}"
+                if speed_str:
+                    msg += f" at {speed_str}"
                 if eta:
                     msg += f" ETA {eta}"
                 message_queue.put((MSG_TRACK_PROGRESS, msg))
 
     opts = _build_ydl_opts(
         format_type, quality_name, output_dir,
+        audio_format_name=audio_format_name,
         logger=QuietLogger(),
         progress_hooks=[progress_hook],
     )
@@ -193,6 +265,10 @@ def _download_single_track(
             ydl.download([track.url])
         track.status = "done"
         message_queue.put((MSG_TRACK_DONE, track))
+    except _DownloadCancelled:
+        track.status = "failed"
+        track.error = "Cancelled"
+        message_queue.put((MSG_TRACK_FAILED, track))
     except Exception as e:
         track.status = "failed"
         track.error = str(e)
@@ -207,15 +283,24 @@ def download_tracks(
     message_queue: Queue,
     playlist_result: PlaylistResult,
     max_workers: int = DEFAULT_WORKERS,
+    cancel_event: threading.Event = None,
+    audio_format_name: str = "",
 ):
     """Download tracks in parallel using a thread pool."""
     workers = max(1, min(max_workers, MAX_WORKERS))
 
     if workers == 1 or len(tracks) == 1:
         for track in tracks:
+            if cancel_event and cancel_event.is_set():
+                track.status = "failed"
+                track.error = "Cancelled"
+                message_queue.put((MSG_TRACK_FAILED, track))
+                continue
             _download_single_track(
                 track, output_dir, format_type, quality_name,
                 message_queue, playlist_result.total,
+                cancel_event=cancel_event,
+                audio_format_name=audio_format_name,
             )
         return
 
@@ -227,11 +312,12 @@ def download_tracks(
                 _download_single_track,
                 track, output_dir, format_type, quality_name,
                 message_queue, playlist_result.total,
+                cancel_event, audio_format_name,
             ): track
             for track in tracks
         }
         for future in as_completed(futures):
-            future.result()  # propagates any unexpected exception
+            future.result()
 
 
 def start_download(
@@ -240,12 +326,16 @@ def start_download(
     format_type: str,
     quality_name: str,
     max_workers: int = DEFAULT_WORKERS,
+    cancel_event: threading.Event = None,
+    audio_format_name: str = "",
 ) -> tuple:
     """
-    High-level download entry point. Returns (message_queue, None).
+    High-level download entry point. Returns (message_queue, cancel_event).
     Caller should poll message_queue for updates.
     """
     message_queue = Queue()
+    if cancel_event is None:
+        cancel_event = threading.Event()
 
     def run():
         message_queue.put((MSG_LOG, "Fetching playlist/video info..."))
@@ -255,6 +345,11 @@ def start_download(
             result = PlaylistResult()
             result.playlist_title = "Error"
             message_queue.put((MSG_LOG, f"Failed to fetch info: {e}"))
+            message_queue.put((MSG_FINISHED, result))
+            return
+
+        if cancel_event.is_set():
+            message_queue.put((MSG_LOG, "Cancelled."))
             message_queue.put((MSG_FINISHED, result))
             return
 
@@ -268,13 +363,16 @@ def start_download(
             f"Found {result.total} track(s) in \"{result.playlist_title}\""))
 
         os.makedirs(output_dir, exist_ok=True)
-        download_tracks(result.tracks, output_dir, format_type, quality_name,
-                        message_queue, result, max_workers=max_workers)
+        download_tracks(
+            result.tracks, output_dir, format_type, quality_name,
+            message_queue, result, max_workers=max_workers,
+            cancel_event=cancel_event, audio_format_name=audio_format_name,
+        )
         message_queue.put((MSG_FINISHED, result))
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    return message_queue, None
+    return message_queue, cancel_event
 
 
 def retry_failed(
@@ -283,14 +381,19 @@ def retry_failed(
     format_type: str,
     quality_name: str,
     max_workers: int = DEFAULT_WORKERS,
-) -> Queue:
-    """Retry only the failed tracks. Returns a message_queue to poll."""
+    cancel_event: threading.Event = None,
+    audio_format_name: str = "",
+) -> tuple:
+    """Retry only the failed tracks. Returns (message_queue, cancel_event)."""
     message_queue = Queue()
+    if cancel_event is None:
+        cancel_event = threading.Event()
+
     failed = playlist_result.failed_tracks
     if not failed:
         message_queue.put((MSG_LOG, "No failed tracks to retry."))
         message_queue.put((MSG_FINISHED, playlist_result))
-        return message_queue
+        return message_queue, cancel_event
 
     for t in failed:
         t.status = "pending"
@@ -299,13 +402,16 @@ def retry_failed(
     message_queue.put((MSG_LOG, f"Retrying {len(failed)} failed track(s)..."))
 
     def run():
-        download_tracks(failed, output_dir, format_type, quality_name,
-                        message_queue, playlist_result, max_workers=max_workers)
+        download_tracks(
+            failed, output_dir, format_type, quality_name,
+            message_queue, playlist_result, max_workers=max_workers,
+            cancel_event=cancel_event, audio_format_name=audio_format_name,
+        )
         message_queue.put((MSG_FINISHED, playlist_result))
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    return message_queue
+    return message_queue, cancel_event
 
 
 def check_ffmpeg() -> bool:
@@ -314,15 +420,40 @@ def check_ffmpeg() -> bool:
 
 
 def setup_local_ffmpeg(project_root: str) -> bool:
-    bin_dir = os.path.join(project_root, "ffmpeg", "bin")
-    if not os.path.isdir(bin_dir):
-        return False
-    exe = os.path.join(bin_dir, "ffmpeg.exe")
-    if not os.path.isfile(exe):
-        return False
-    path = os.environ.get("PATH", "")
-    os.environ["PATH"] = bin_dir + os.pathsep + path
-    return True
+    import sys
+    import glob
+    import shutil as _shutil
+
+    ffmpeg_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+
+    search_dirs = [
+        os.path.join(project_root, "ffmpeg", "bin"),
+        os.path.join(project_root, "ffmpeg"),
+        os.path.join(project_root, "imageio_ffmpeg_bin"),
+    ]
+
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        candidate = os.path.join(d, ffmpeg_name)
+        if os.path.isfile(candidate):
+            path = os.environ.get("PATH", "")
+            os.environ["PATH"] = d + os.pathsep + path
+            return True
+        hits = glob.glob(os.path.join(d, "ffmpeg*"))
+        for h in hits:
+            if os.path.isfile(h) and os.access(h, os.X_OK):
+                target = os.path.join(d, ffmpeg_name)
+                if not os.path.isfile(target):
+                    try:
+                        _shutil.copy2(h, target)
+                    except Exception:
+                        pass
+                path = os.environ.get("PATH", "")
+                os.environ["PATH"] = d + os.pathsep + path
+                return True
+
+    return False
 
 
 def setup_imageio_ffmpeg() -> bool:

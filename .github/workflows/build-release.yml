@@ -23,17 +23,36 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller Pillow
 
-      - name: Build .exe
+      - name: Generate icon.ico (if missing)
         run: |
-          pyinstaller --onefile --windowed --name YT-Downloader --hidden-import yt_dlp --hidden-import imageio_ffmpeg main.py
+          python -c "
+          import os
+          if not os.path.isfile('icon.ico'):
+              try:
+                  from PIL import Image, ImageDraw
+                  img = Image.new('RGBA', (256, 256), (26, 26, 46, 255))
+                  draw = ImageDraw.Draw(img)
+                  draw.polygon([(70,40),(70,216),(220,128)], fill=(220,38,38))
+                  draw.polygon([(110,60),(110,160),(160,196),(160,60)], fill=(255,255,255))
+                  draw.polygon([(120,160),(160,196),(200,160)], fill=(255,255,255))
+                  img.save('icon.ico', format='ICO', sizes=[(256,256),(64,64),(32,32),(16,16)])
+              except Exception:
+                  pass
+          "
+
+      - name: Build with PyInstaller
+        run: pyinstaller build.spec
+
+      - name: Zip output folder
+        run: Compress-Archive -Path "dist\YT-Downloader\*" -DestinationPath "dist\YT-Downloader-Windows.zip"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: YT-Downloader-Windows
-          path: dist/YT-Downloader.exe
+          path: dist/YT-Downloader-Windows.zip
 
   build-macos:
     runs-on: macos-latest
@@ -50,55 +69,33 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build .app bundle
-        run: |
-          pyinstaller --onefile --windowed --name YT-Downloader --hidden-import yt_dlp --hidden-import imageio_ffmpeg main.py
-          # PyInstaller with --windowed on macOS creates a .app inside dist/
-          # If only an executable was created, wrap it manually
-          if [ ! -d "dist/YT-Downloader.app" ]; then
-            mkdir -p "dist/YT-Downloader.app/Contents/MacOS"
-            cp dist/YT-Downloader "dist/YT-Downloader.app/Contents/MacOS/YT-Downloader"
-            cat > "dist/YT-Downloader.app/Contents/Info.plist" << 'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleName</key>
-              <string>YT Downloader</string>
-              <key>CFBundleDisplayName</key>
-              <string>YouTube MP3/MP4 Downloader</string>
-              <key>CFBundleExecutable</key>
-              <string>YT-Downloader</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.wingsaberrohan.yt-downloader</string>
-              <key>CFBundleVersion</key>
-              <string>1.0.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0.0</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-          </dict>
-          </plist>
-          PLIST
-          fi
+      - name: Build with PyInstaller
+        run: pyinstaller build.spec
 
       - name: Install create-dmg
         run: brew install create-dmg
 
       - name: Create .dmg
         run: |
-          create-dmg \
-            --volname "YT Downloader" \
-            --window-pos 200 120 \
-            --window-size 480 360 \
-            --icon "YT-Downloader.app" 120 180 \
-            --app-drop-link 360 180 \
-            "dist/YT-Downloader.dmg" \
-            "dist/YT-Downloader.app" \
-          || true
-          # Fallback: if create-dmg fails, use hdiutil directly
-          if [ ! -f "dist/YT-Downloader.dmg" ]; then
-            hdiutil create -volname "YT Downloader" -srcfolder "dist/YT-Downloader.app" -ov -format UDZO "dist/YT-Downloader.dmg"
+          if [ -d "dist/YT-Downloader.app" ]; then
+            create-dmg \
+              --volname "YT Downloader" \
+              --window-pos 200 120 \
+              --window-size 480 360 \
+              --icon "YT-Downloader.app" 120 180 \
+              --app-drop-link 360 180 \
+              "dist/YT-Downloader.dmg" \
+              "dist/YT-Downloader.app" \
+            || true
+            if [ ! -f "dist/YT-Downloader.dmg" ]; then
+              hdiutil create -volname "YT Downloader" \
+                -srcfolder "dist/YT-Downloader.app" \
+                -ov -format UDZO "dist/YT-Downloader.dmg"
+            fi
+          else
+            # Fallback: zip the one-dir output
+            cd dist && zip -r YT-Downloader-macOS.zip YT-Downloader/ && cd ..
+            mv dist/YT-Downloader-macOS.zip dist/YT-Downloader.dmg
           fi
 
       - name: Upload macOS artifact
@@ -126,16 +123,22 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | Windows  | `YT-Downloader.exe` |
+            | Windows  | `YT-Downloader-Windows.zip` |
             | macOS    | `YT-Downloader.dmg` |
 
             ### How to use
             1. Download the file for your OS
-            2. **Windows**: Run `YT-Downloader.exe` (no install needed)
+            2. **Windows**: Extract the zip and run `YT-Downloader.exe` (no install needed)
             3. **macOS**: Open `YT-Downloader.dmg`, drag the app to Applications
             4. FFmpeg is bundled automatically — no separate install required
+
+            ### Features
+            - Audio downloads: MP3, AAC, FLAC, WAV, OGG
+            - Video downloads: MP4 up to 4K
+            - Playlist support with parallel downloads
+            - Cancel, retry failed, progress bars, dark/light mode
           files: |
-            artifacts/YT-Downloader-Windows/YT-Downloader.exe
+            artifacts/YT-Downloader-Windows/YT-Downloader-Windows.zip
             artifacts/YT-Downloader-macOS/YT-Downloader.dmg
           draft: false
           prerelease: false

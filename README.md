@@ -1,6 +1,6 @@
-# YouTube MP3 / MP4 Downloader
+# YouTube Downloader
 
-A simple desktop app to download YouTube videos or playlists as **MP3 (320 kbps)** or **MP4 video** (4K, 1080p, 720p, etc.) using [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg. Works on Windows, macOS, and Linux.
+A modern desktop app to download YouTube videos or playlists as audio (MP3, AAC, FLAC, WAV, OGG) or MP4 video (up to 4K) using [yt-dlp](https://github.com/yt-dlp/yt-dlp) and FFmpeg. Built with [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) for a clean dark/light mode UI.
 
 ## Download (no install needed)
 
@@ -8,10 +8,58 @@ Pre-built binaries are available on the [Releases](https://github.com/wingsaberr
 
 | Platform | File | How to use |
 |----------|------|------------|
-| Windows  | `YT-Downloader.exe` | Just run it — no install needed |
+| Windows  | `YT-Downloader-Windows.zip` | Extract and run `YT-Downloader.exe` |
 | macOS    | `YT-Downloader.dmg` | Open the DMG, drag the app to Applications |
 
 FFmpeg is bundled automatically. No Python or extra setup required.
+
+---
+
+## How to use
+
+1. **Paste the URL** -- Click the **Paste** button or type a YouTube video / playlist URL.
+
+2. **Choose format**
+   - **Audio** -- Pick from MP3 (320/192 kbps), AAC, FLAC, WAV, or OGG.
+   - **Video (MP4)** -- Pick quality: Best available, 4K, 1080p, 720p, 480p, or 360p.
+
+3. **Set output folder** -- Use the default `downloads` folder or click **Browse** to pick another.
+
+4. **Parallel downloads** -- Choose 1-8 concurrent workers (default: 3) for playlists.
+
+5. **Download** -- Click **Download**. Visual progress bars show per-track and overall progress with live speed display.
+
+6. **Cancel / Retry** -- Click **Cancel** to abort, or **Retry Failed** to re-attempt only the tracks that failed.
+
+7. **Open Folder** -- After downloading, click **Open Folder** to jump straight to your files.
+
+### Tips
+
+- **Playlists**: Paste the playlist URL; all videos download with the same format and quality.
+- **Single video**: Paste a normal watch URL; one file will be created.
+- **Dark/Light mode**: Toggle the switch in the top-right corner.
+
+---
+
+## Features
+
+| Feature             | Details                                                    |
+|---------------------|------------------------------------------------------------|
+| Audio formats       | MP3 (320/192 kbps), AAC (256 kbps), FLAC, WAV, OGG (256 kbps) |
+| Video format        | MP4 -- Best, 4K, 1080p, 720p, 480p, 360p                  |
+| Playlists           | Yes, with per-track progress and summary report            |
+| Parallel downloads  | 1-8 concurrent tracks (default: 3)                        |
+| Cancel downloads    | Stop all in-flight downloads instantly                     |
+| Retry failed        | One-click retry for only the failed tracks                 |
+| Paste from clipboard| Paste button next to the URL field                         |
+| Open output folder  | Button to open the download folder in Explorer / Finder    |
+| Progress bars       | Overall + per-track visual progress bars                   |
+| Download speed      | Live speed display (KB/s, MB/s)                            |
+| Dark / Light mode   | Toggle switch, defaults to dark                            |
+| Modern UI           | CustomTkinter with rounded widgets and clean layout        |
+| Platforms           | Windows (.exe), macOS (.dmg), or run from source           |
+
+All processing is done locally; no account or API key is required.
 
 ---
 
@@ -20,12 +68,12 @@ FFmpeg is bundled automatically. No Python or extra setup required.
 ### Requirements
 
 - **Python 3.8+**
-- Nothing else — FFmpeg is included via the `imageio-ffmpeg` package (downloaded automatically on first run).
+- Nothing else -- FFmpeg is included via the `imageio-ffmpeg` package (downloaded automatically on first run).
 
 ### Setup and run
 
 1. Open a terminal in the project folder.
-2. Install dependencies (this installs yt-dlp and the FFmpeg bundle):
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
@@ -34,55 +82,29 @@ FFmpeg is bundled automatically. No Python or extra setup required.
    python main.py
    ```
 
-The first time you run the app, FFmpeg may be downloaded automatically (via `imageio-ffmpeg`). No manual download or unzip needed.
-
 ### Optional: use your own FFmpeg
 
 If you prefer a different FFmpeg build (e.g. full codecs), you can:
 
-- **Option A** – Add FFmpeg’s `bin` folder to your system **PATH**, or  
-- **Option B** – Place FFmpeg in the project so you have:  
-  `Youtube download\ffmpeg\bin\ffmpeg.exe`
+- **Option A** -- Add FFmpeg's `bin` folder to your system **PATH**, or
+- **Option B** -- Place FFmpeg in the project so you have:
+  `ffmpeg/bin/ffmpeg.exe`
 
 The app will use your FFmpeg if it finds it (local folder or PATH) before falling back to the bundled one.
 
-## How to use
+---
 
-1. **Paste the URL**  
-   In "YouTube URL", paste a single video link or a playlist link, e.g.  
-   `https://www.youtube.com/watch?v=...` or `https://www.youtube.com/playlist?list=...`
+## Build from source
 
-2. **Choose format**  
-   - **MP3 (320 kbps)** – audio only, 320 kbps MP3.  
-   - **MP4 (video)** – full video + audio, merged into one MP4 file.
+To create a standalone .exe / .app yourself:
 
-3. **Choose video quality** (only when MP4 is selected)  
-   - **Best available** – highest resolution (e.g. 4K if the video has it).  
-   - **4K (2160p)**, **1080p**, **720p**, **480p**, **360p** – cap at that resolution (or best below it if the video is lower).
+```bash
+pip install pyinstaller
+pyinstaller build.spec
+```
 
-4. **Set output folder**  
-   Use the default `downloads` or click **Browse...** to pick another folder. Files will be saved there with the video title as the filename.
+The output will be in `dist/YT-Downloader/`. The `build.spec` file handles bundling CustomTkinter data files, the imageio-ffmpeg binary, and the app icon automatically.
 
-5. **Download**  
-   Click **Download**. Progress appears in the log area. When it says "Download complete." / "Done.", the file(s) are in the output folder.
+### CI/CD
 
-### Tips
-
-- **Playlists**: Paste the playlist URL; all videos in the playlist will download with the same format and quality.
-- **Single video**: Paste the normal watch URL; one file will be created.
-- If a video doesn’t have the chosen resolution (e.g. no 4K), yt-dlp will pick the best available up to that cap.
-
-## Features
-
-| Feature             | Details                                       |
-|---------------------|-----------------------------------------------|
-| Output formats      | MP3 (320 kbps), MP4 (video)                   |
-| Video quality       | Best, 4K, 1080p, 720p, 480p, 360p             |
-| Single video        | Yes                                           |
-| Playlists           | Yes, with per-track progress and summary       |
-| Parallel downloads  | 1-8 concurrent tracks (default: 3)            |
-| Retry failed        | One-click retry for only the failed tracks     |
-| Summary report      | Shows succeeded/failed tracks with errors      |
-| Platforms           | Windows (.exe), macOS (.dmg), or run from source |
-
-All processing is done locally; no account or API key is required.
+Push a tag like `v1.0.0` to trigger the GitHub Actions workflow that builds Windows and macOS binaries and creates a GitHub Release automatically.
