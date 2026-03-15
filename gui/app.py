@@ -29,6 +29,11 @@ from downloader import (
 )
 from downloader.history import add as history_add, get_all as history_get_all, clear as history_clear
 
+try:
+    from upload_to_telegram import upload_folder_to_telegram
+except ImportError:
+    upload_folder_to_telegram = None
+
 
 def is_supported_url(text: str) -> bool:
     """Accept any http/https URL (yt-dlp supports 1800+ sites)."""
@@ -50,6 +55,7 @@ class MainWindow(ctk.CTkFrame):
         self._running = False
         self._download_queue = []
         self._queue_running = False
+        self._telegram_uploading = False
 
         self._build_ui()
         self.after(800, self._check_ytdlp_update_available)
@@ -115,11 +121,13 @@ class MainWindow(ctk.CTkFrame):
         ctk.CTkLabel(
             top_bar, text="YouTube Downloader",
             font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=("gray10", "gray90"),
         ).pack(side="left")
 
         self.theme_switch = ctk.CTkSwitch(
             top_bar, text="Dark Mode", command=self._toggle_theme,
             font=ctk.CTkFont(size=12),
+            text_color=("gray10", "gray90"),
         )
         self.theme_switch.pack(side="right")
         self.theme_switch.select()
@@ -132,6 +140,7 @@ class MainWindow(ctk.CTkFrame):
             main,
             text="Video URL (YouTube, Instagram, TikTok, and 1800+ sites):",
             font=ctk.CTkFont(size=13),
+            text_color=("gray10", "gray90"),
         ).pack(anchor="w")
         url_frame = ctk.CTkFrame(main, fg_color="transparent")
         url_frame.pack(fill="x", pady=(2, 8))
@@ -168,15 +177,17 @@ class MainWindow(ctk.CTkFrame):
         fmt_frame = ctk.CTkFrame(main, fg_color="transparent")
         fmt_frame.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(fmt_frame, text="Format:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 10))
+                     font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 10))
         self.format_var = tk.StringVar(value=FORMAT_AUDIO)
         ctk.CTkRadioButton(
             fmt_frame, text="Audio", variable=self.format_var,
             value=FORMAT_AUDIO, command=self._on_format_change,
+            text_color=("gray10", "gray90"),
         ).pack(side="left", padx=(0, 12))
         ctk.CTkRadioButton(
             fmt_frame, text="Video (MP4)", variable=self.format_var,
             value=FORMAT_MP4, command=self._on_format_change,
+            text_color=("gray10", "gray90"),
         ).pack(side="left")
 
         # Audio format / Video quality (in separate sub-frames for clean toggle)
@@ -185,7 +196,7 @@ class MainWindow(ctk.CTkFrame):
 
         self.audio_options = ctk.CTkFrame(self.options_container, fg_color="transparent")
         ctk.CTkLabel(self.audio_options, text="Audio format:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+                     font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 8))
         self.audio_fmt_var = tk.StringVar(value=AUDIO_FORMATS[0][0])
         ctk.CTkComboBox(
             self.audio_options, variable=self.audio_fmt_var,
@@ -194,7 +205,7 @@ class MainWindow(ctk.CTkFrame):
 
         self.video_options = ctk.CTkFrame(self.options_container, fg_color="transparent")
         ctk.CTkLabel(self.video_options, text="Video quality:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+                     font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 8))
         self.quality_var = tk.StringVar(value=MP4_QUALITIES[0][0])
         ctk.CTkComboBox(
             self.video_options, variable=self.quality_var,
@@ -205,7 +216,7 @@ class MainWindow(ctk.CTkFrame):
 
         # Output folder
         ctk.CTkLabel(main, text="Output folder:",
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+                     font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(anchor="w")
         out_frame = ctk.CTkFrame(main, fg_color="transparent")
         out_frame.pack(fill="x", pady=(2, 6))
         self.out_var = tk.StringVar(value=os.path.abspath("downloads"))
@@ -218,7 +229,7 @@ class MainWindow(ctk.CTkFrame):
         cookie_frame = ctk.CTkFrame(main, fg_color="transparent")
         cookie_frame.pack(fill="x", pady=(0, 6))
         self.cookie_var = tk.StringVar(value="")
-        ctk.CTkLabel(cookie_frame, text="Cookies:", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(cookie_frame, text="Cookies:", font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 8))
         ctk.CTkEntry(cookie_frame, textvariable=self.cookie_var, height=32, placeholder_text="No cookie file").pack(
             side="left", fill="x", expand=True, padx=(0, 6))
         ctk.CTkButton(cookie_frame, text="Load cookies…", width=100, height=32,
@@ -230,9 +241,9 @@ class MainWindow(ctk.CTkFrame):
         self.subs_var = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             sub_frame, text="Download subtitles (SRT)", variable=self.subs_var,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=13), text_color=("gray10", "gray90"),
         ).pack(side="left", padx=(0, 12))
-        ctk.CTkLabel(sub_frame, text="Language:", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(sub_frame, text="Language:", font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 6))
         self.sub_lang_var = tk.StringVar(value="en")
         SUB_LANG_OPTIONS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "ru", "ar", "hi"]
         ctk.CTkComboBox(
@@ -242,14 +253,14 @@ class MainWindow(ctk.CTkFrame):
         self.sponsorblock_var = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             sub_frame, text="Remove sponsors (SponsorBlock)", variable=self.sponsorblock_var,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=13), text_color=("gray10", "gray90"),
         ).pack(side="left")
 
         # Parallel workers
         parallel_frame = ctk.CTkFrame(main, fg_color="transparent")
         parallel_frame.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(parallel_frame, text="Parallel downloads:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+                     font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(side="left", padx=(0, 8))
         self.workers_var = tk.StringVar(value=str(DEFAULT_WORKERS))
         ctk.CTkOptionMenu(
             parallel_frame, variable=self.workers_var,
@@ -257,6 +268,39 @@ class MainWindow(ctk.CTkFrame):
         ).pack(side="left", padx=(0, 8))
         ctk.CTkLabel(parallel_frame, text=f"(1 = sequential, up to {MAX_WORKERS})",
                      text_color=("gray40", "gray65"), font=ctk.CTkFont(size=11)).pack(side="left")
+
+        # Upload to Telegram (v3) – only if module is available. Off by default; user must opt in.
+        self.telegram_var = tk.BooleanVar(value=False)
+        self.telegram_token_var = tk.StringVar(value=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+        self.telegram_channel_var = tk.StringVar(value="@wing_karaoke")
+        self.telegram_topic_var = tk.StringVar(value="")
+        self.telegram_album_var = tk.StringVar(value="No")
+        self.telegram_workers_var = tk.StringVar(value="5")
+        self.telegram_frame = ctk.CTkFrame(main, fg_color=("gray90", "gray20"), corner_radius=6)
+        tg_inner = ctk.CTkFrame(self.telegram_frame, fg_color="transparent")
+        tg_inner.pack(fill="x", padx=10, pady=8)
+        ctk.CTkCheckBox(
+            tg_inner, text="Upload to Telegram after download",
+            variable=self.telegram_var, font=ctk.CTkFont(size=13),
+            command=self._on_telegram_toggle,
+            text_color=("gray10", "gray90"),
+        ).pack(anchor="w")
+        self.telegram_opts = ctk.CTkFrame(tg_inner, fg_color="transparent")
+        self.telegram_opts.pack(fill="x", pady=(6, 0))
+        ctk.CTkLabel(self.telegram_opts, text="Bot token:", font=ctk.CTkFont(size=12), text_color=("gray10", "gray90")).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkEntry(self.telegram_opts, textvariable=self.telegram_token_var, width=280, height=28, placeholder_text="Or set TELEGRAM_BOT_TOKEN").grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
+        ctk.CTkLabel(self.telegram_opts, text="Channel:", font=ctk.CTkFont(size=12), text_color=("gray10", "gray90")).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkEntry(self.telegram_opts, textvariable=self.telegram_channel_var, width=180, height=28, placeholder_text="@channel").grid(row=1, column=1, sticky="w", padx=(0, 8), pady=2)
+        ctk.CTkLabel(self.telegram_opts, text="Topic ID (folder):", font=ctk.CTkFont(size=12), text_color=("gray10", "gray90")).grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkEntry(self.telegram_opts, textvariable=self.telegram_topic_var, width=100, height=28, placeholder_text="Optional").grid(row=2, column=1, sticky="w", padx=(0, 8), pady=2)
+        ctk.CTkLabel(self.telegram_opts, text="Group as albums:", font=ctk.CTkFont(size=12), text_color=("gray10", "gray90")).grid(row=3, column=0, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkOptionMenu(self.telegram_opts, variable=self.telegram_album_var, values=["No", "5 per message", "10 per message"], width=140).grid(row=3, column=1, sticky="w", padx=(0, 8), pady=2)
+        ctk.CTkLabel(self.telegram_opts, text="Upload workers:", font=ctk.CTkFont(size=12), text_color=("gray10", "gray90")).grid(row=4, column=0, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkOptionMenu(self.telegram_opts, variable=self.telegram_workers_var, values=[str(i) for i in range(1, 17)], width=60).grid(row=4, column=1, sticky="w", padx=(0, 8), pady=2)
+        self.telegram_opts.grid_columnconfigure(1, weight=1)
+        if upload_folder_to_telegram:
+            self.telegram_frame.pack(fill="x", pady=(0, 8))
+        self._on_telegram_toggle()
 
         # Buttons
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -296,7 +340,7 @@ class MainWindow(ctk.CTkFrame):
         stats_frame.pack(fill="x", pady=(2, 2))
         self.stats_var = tk.StringVar(value="")
         ctk.CTkLabel(stats_frame, textvariable=self.stats_var,
-                     font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
+                     font=ctk.CTkFont(size=12, weight="bold"), text_color=("gray10", "gray90")).pack(side="left")
         self.speed_var = tk.StringVar(value="")
         ctk.CTkLabel(stats_frame, textvariable=self.speed_var,
                      font=ctk.CTkFont(size=12),
@@ -336,7 +380,7 @@ class MainWindow(ctk.CTkFrame):
         queue_frame = ctk.CTkFrame(self.tabview.tab("Queue"), fg_color="transparent")
         queue_frame.pack(fill="both", expand=True)
         ctk.CTkLabel(queue_frame, text="Queued URLs (downloaded one after another):",
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+                     font=ctk.CTkFont(size=13), text_color=("gray10", "gray90")).pack(anchor="w")
         self.queue_text = ctk.CTkTextbox(
             queue_frame, state="disabled", height=120,
             font=ctk.CTkFont(family="Consolas", size=11),
@@ -393,6 +437,19 @@ class MainWindow(ctk.CTkFrame):
     # ------------------------------------------------------------------ helpers (continued)
     def _toggle_theme(self):
         ctk.set_appearance_mode("dark" if self.theme_switch.get() else "light")
+
+    def _on_telegram_toggle(self):
+        enabled = self.telegram_var.get()
+        for child in self.telegram_opts.winfo_children():
+            child.configure(state="normal" if enabled else "disabled")
+
+    def _telegram_upload_done(self, ok: int, fail: int, error: str | None = None) -> None:
+        self._telegram_uploading = False
+        if error:
+            self._log(f"[Telegram] Upload failed: {error}")
+        else:
+            self._log(f"[Telegram] Upload done. Uploaded: {ok}, Failed: {fail}")
+        self._set_running(self._running)
 
     def _on_format_change(self):
         if self.format_var.get() == FORMAT_AUDIO:
@@ -753,6 +810,45 @@ class MainWindow(ctk.CTkFrame):
         self.track_progress.set(0)
         self.tabview.set("Summary")
         self.open_folder_btn.configure(state="normal")
+
+        # Only upload to Telegram if user explicitly enabled the option (never by default).
+        if self.telegram_var.get() and upload_folder_to_telegram:
+            token = (self.telegram_token_var.get() or "").strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            channel = (self.telegram_channel_var.get() or "").strip()
+            if token and channel:
+                out_dir = self.out_var.get().strip()
+                if out_dir and os.path.isdir(out_dir):
+                    topic_s = (self.telegram_topic_var.get() or "").strip()
+                    topic_id = int(topic_s) if topic_s.isdigit() else None
+                    album_map = {"No": 0, "5 per message": 5, "10 per message": 10}
+                    album_size = album_map.get(self.telegram_album_var.get(), 0)
+                    workers = int(self.telegram_workers_var.get() or 5)
+                    self._telegram_uploading = True
+
+                    def progress_cb(current: int, total: int, message: str) -> None:
+                        self.after(0, lambda: self._log(f"[Telegram] {message}"))
+
+                    def do_upload() -> None:
+                        try:
+                            ok, fail = upload_folder_to_telegram(
+                                token=token,
+                                channel=channel,
+                                folder_path=out_dir,
+                                topic_id=topic_id,
+                                album_size=album_size,
+                                workers=workers,
+                                progress_callback=progress_cb,
+                            )
+                            self.after(0, lambda: self._telegram_upload_done(ok, fail))
+                        except Exception as e:
+                            self.after(0, lambda: self._telegram_upload_done(0, 0, str(e)))
+
+                    threading.Thread(target=do_upload, daemon=True).start()
+                else:
+                    self._log("[Telegram] Output folder not found; upload skipped.")
+            else:
+                self._log("[Telegram] Set bot token and channel to upload after download.")
+
         if self._queue_running and self._download_queue:
             self.after(500, self._start_next_queued_download)
         elif self._queue_running:
@@ -761,7 +857,8 @@ class MainWindow(ctk.CTkFrame):
 
     def _set_running(self, running: bool):
         self._running = running
-        self.download_btn.configure(state="disabled" if running else "normal")
+        busy = running or self._telegram_uploading
+        self.download_btn.configure(state="disabled" if busy else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
         has_failed = (
             self._playlist_result
