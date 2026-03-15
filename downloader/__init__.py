@@ -2,6 +2,7 @@ from .engine import (
     start_download,
     retry_failed,
     extract_playlist_info,
+    get_video_preview,
     check_ffmpeg,
     setup_local_ffmpeg,
     setup_imageio_ffmpeg,
@@ -23,11 +24,18 @@ from .engine import (
     DEFAULT_WORKERS,
     MAX_WORKERS,
 )
+from .ytdlp_updater import (
+    get_current_version,
+    get_latest_version,
+    update_ytdlp,
+)
+from . import history as history_module
 
 __all__ = [
     "start_download",
     "retry_failed",
     "extract_playlist_info",
+    "get_video_preview",
     "check_ffmpeg",
     "setup_local_ffmpeg",
     "setup_imageio_ffmpeg",
@@ -48,4 +56,8 @@ __all__ = [
     "MSG_FINISHED",
     "DEFAULT_WORKERS",
     "MAX_WORKERS",
+    "get_current_version",
+    "get_latest_version",
+    "update_ytdlp",
+    "history_module",
 ]

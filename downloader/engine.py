@@ -77,6 +77,28 @@ class _DownloadCancelled(Exception):
     pass
 
 
+# On 403, retry with different client/UA to work around YouTube blocking
+MOBILE_UA = (
+    "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
+)
+FALLBACK_STRATEGIES = [
+    {},
+    {"extractor_args": {"youtube": {"player_client": ["web_embedded"]}}},
+    {"extractor_args": {"youtube": {"player_client": ["ios"]}}},
+    {"http_headers": {"User-Agent": MOBILE_UA}},
+]
+
+
+def _is_403_or_forbidden(exc: Exception) -> bool:
+    s = str(exc).lower()
+    if "403" in s or "forbidden" in s:
+        return True
+    if hasattr(exc, "code") and getattr(exc, "code") == 403:
+        return True
+    return False
+
+
 def get_quality_format_string(quality_name: str) -> str:
     for name, fmt in MP4_QUALITIES:
         if name == quality_name:
@@ -109,6 +131,10 @@ def _build_ydl_opts(
     audio_format_name: str = "",
     logger=None,
     progress_hooks=None,
+    write_subs: bool = False,
+    sub_langs: Optional[List[str]] = None,
+    remove_sponsors: bool = False,
+    cookiefile: Optional[str] = None,
 ) -> dict:
     out_tmpl = output_dir.replace("\\", "/").rstrip("/") + "/%(title)s.%(ext)s"
 
@@ -149,7 +175,34 @@ def _build_ydl_opts(
         opts["logger"] = logger
     if progress_hooks:
         opts["progress_hooks"] = progress_hooks
+    if write_subs and sub_langs:
+        opts["writesubtitles"] = True
+        opts["writeautomaticsub"] = True
+        opts["subtitleslangs"] = list(sub_langs)
+        opts["subtitlesformat"] = "srt"
+    if remove_sponsors:
+        cats = ["sponsor", "selfpromo", "interaction"]
+        existing_pp = opts.get("postprocessors") or []
+        opts["postprocessors"] = existing_pp + [
+            {"key": "SponsorBlock", "categories": cats, "when": "after_filter"},
+            {"key": "ModifyChapters", "remove_sponsor_segments": cats},
+        ]
+    if cookiefile and os.path.isfile(cookiefile):
+        opts["cookiefile"] = cookiefile
     return opts
+
+
+def _merge_opts(base: dict, strategy: dict) -> dict:
+    """Return a new dict: base updated with strategy (shallow merge for top-level keys)."""
+    out = dict(base)
+    for k, v in strategy.items():
+        if k == "extractor_args" and k in out:
+            out[k] = {**out[k], **v} if isinstance(out[k], dict) else dict(v)
+        elif k == "http_headers" and k in out:
+            out[k] = {**out[k], **v} if isinstance(out[k], dict) else dict(v)
+        else:
+            out[k] = v
+    return out
 
 
 def extract_playlist_info(url: str) -> PlaylistResult:
@@ -196,6 +249,39 @@ def extract_playlist_info(url: str) -> PlaylistResult:
     return result
 
 
+def get_video_preview(url: str) -> Optional[dict]:
+    """
+    Extract title and thumbnail URL for the first/single video (no download).
+    Returns {"title": str, "thumbnail": str} or None on error.
+    """
+    opts = {
+        "extract_flat": False,
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return None
+        entries = info.get("entries")
+        if entries:
+            first = None
+            for e in entries:
+                if e is not None:
+                    first = e
+                    break
+            if first is None:
+                return None
+            info = first
+        title = info.get("title") or "Unknown"
+        thumbnail = info.get("thumbnail") or ""
+        return {"title": title, "thumbnail": thumbnail}
+    except Exception:
+        return None
+
+
 DEFAULT_WORKERS = 3
 MAX_WORKERS = 8
 
@@ -209,6 +295,10 @@ def _download_single_track(
     total: int,
     cancel_event: threading.Event = None,
     audio_format_name: str = "",
+    write_subs: bool = False,
+    sub_langs: Optional[List[str]] = None,
+    remove_sponsors: bool = False,
+    cookiefile: Optional[str] = None,
 ):
     """Download one track. Called from the thread pool."""
     if cancel_event and cancel_event.is_set():
@@ -252,27 +342,45 @@ def _download_single_track(
                     msg += f" ETA {eta}"
                 message_queue.put((MSG_TRACK_PROGRESS, msg))
 
-    opts = _build_ydl_opts(
+    base_opts = _build_ydl_opts(
         format_type, quality_name, output_dir,
         audio_format_name=audio_format_name,
         logger=QuietLogger(),
         progress_hooks=[progress_hook],
+        write_subs=write_subs,
+        sub_langs=sub_langs,
+        remove_sponsors=remove_sponsors,
+        cookiefile=cookiefile,
     )
-    opts["noplaylist"] = True
+    base_opts["noplaylist"] = True
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([track.url])
-        track.status = "done"
-        message_queue.put((MSG_TRACK_DONE, track))
-    except _DownloadCancelled:
-        track.status = "failed"
-        track.error = "Cancelled"
-        message_queue.put((MSG_TRACK_FAILED, track))
-    except Exception as e:
-        track.status = "failed"
-        track.error = str(e)
-        message_queue.put((MSG_TRACK_FAILED, track))
+    last_error = None
+    for strategy in FALLBACK_STRATEGIES:
+        if cancel_event and cancel_event.is_set():
+            track.status = "failed"
+            track.error = "Cancelled"
+            message_queue.put((MSG_TRACK_FAILED, track))
+            return
+        opts = _merge_opts(base_opts, strategy)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([track.url])
+            track.status = "done"
+            message_queue.put((MSG_TRACK_DONE, track))
+            return
+        except _DownloadCancelled:
+            track.status = "failed"
+            track.error = "Cancelled"
+            message_queue.put((MSG_TRACK_FAILED, track))
+            return
+        except Exception as e:
+            last_error = e
+            if _is_403_or_forbidden(e) and strategy != FALLBACK_STRATEGIES[-1]:
+                continue
+            break
+    track.status = "failed"
+    track.error = str(last_error) if last_error else "Unknown error"
+    message_queue.put((MSG_TRACK_FAILED, track))
 
 
 def download_tracks(
@@ -285,6 +393,10 @@ def download_tracks(
     max_workers: int = DEFAULT_WORKERS,
     cancel_event: threading.Event = None,
     audio_format_name: str = "",
+    write_subs: bool = False,
+    sub_langs: Optional[List[str]] = None,
+    remove_sponsors: bool = False,
+    cookiefile: Optional[str] = None,
 ):
     """Download tracks in parallel using a thread pool."""
     workers = max(1, min(max_workers, MAX_WORKERS))
@@ -301,6 +413,10 @@ def download_tracks(
                 message_queue, playlist_result.total,
                 cancel_event=cancel_event,
                 audio_format_name=audio_format_name,
+                write_subs=write_subs,
+                sub_langs=sub_langs,
+                remove_sponsors=remove_sponsors,
+                cookiefile=cookiefile,
             )
         return
 
@@ -312,7 +428,12 @@ def download_tracks(
                 _download_single_track,
                 track, output_dir, format_type, quality_name,
                 message_queue, playlist_result.total,
-                cancel_event, audio_format_name,
+                cancel_event=cancel_event,
+                audio_format_name=audio_format_name,
+                write_subs=write_subs,
+                sub_langs=sub_langs,
+                remove_sponsors=remove_sponsors,
+                cookiefile=cookiefile,
             ): track
             for track in tracks
         }
@@ -328,6 +449,10 @@ def start_download(
     max_workers: int = DEFAULT_WORKERS,
     cancel_event: threading.Event = None,
     audio_format_name: str = "",
+    write_subs: bool = False,
+    sub_langs: Optional[List[str]] = None,
+    remove_sponsors: bool = False,
+    cookiefile: Optional[str] = None,
 ) -> tuple:
     """
     High-level download entry point. Returns (message_queue, cancel_event).
@@ -367,6 +492,9 @@ def start_download(
             result.tracks, output_dir, format_type, quality_name,
             message_queue, result, max_workers=max_workers,
             cancel_event=cancel_event, audio_format_name=audio_format_name,
+            write_subs=write_subs, sub_langs=sub_langs,
+            remove_sponsors=remove_sponsors,
+            cookiefile=cookiefile,
         )
         message_queue.put((MSG_FINISHED, result))
 
@@ -383,6 +511,10 @@ def retry_failed(
     max_workers: int = DEFAULT_WORKERS,
     cancel_event: threading.Event = None,
     audio_format_name: str = "",
+    write_subs: bool = False,
+    sub_langs: Optional[List[str]] = None,
+    remove_sponsors: bool = False,
+    cookiefile: Optional[str] = None,
 ) -> tuple:
     """Retry only the failed tracks. Returns (message_queue, cancel_event)."""
     message_queue = Queue()
@@ -406,6 +538,9 @@ def retry_failed(
             failed, output_dir, format_type, quality_name,
             message_queue, playlist_result, max_workers=max_workers,
             cancel_event=cancel_event, audio_format_name=audio_format_name,
+            write_subs=write_subs, sub_langs=sub_langs,
+            remove_sponsors=remove_sponsors,
+            cookiefile=cookiefile,
         )
         message_queue.put((MSG_FINISHED, playlist_result))
 

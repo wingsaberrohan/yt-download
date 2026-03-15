@@ -5,8 +5,10 @@ audio format selection, dark/light toggle, and download speed display.
 import os
 import re
 import sys
+import tempfile
 import threading
 import tkinter as tk
+import urllib.request
 from tkinter import filedialog, messagebox
 from queue import Empty
 
@@ -22,39 +24,80 @@ from downloader import (
     MSG_TRACK_PERCENT, MSG_TRACK_DONE, MSG_TRACK_FAILED,
     MSG_LOG, MSG_FINISHED,
     DEFAULT_WORKERS, MAX_WORKERS,
+    get_current_version, get_latest_version, update_ytdlp,
+    get_video_preview,
 )
+from downloader.history import add as history_add, get_all as history_get_all, clear as history_clear
 
 
-def is_youtube_url(text: str) -> bool:
+def is_supported_url(text: str) -> bool:
+    """Accept any http/https URL (yt-dlp supports 1800+ sites)."""
     if not text or not text.strip():
         return False
-    return bool(
-        re.match(r"^(https?://)?(www\.)?(youtube\.com|youtu\.be)/", text.strip(), re.I)
-    )
+    s = text.strip()
+    return s.startswith("http://") or s.startswith("https://")
 
 
-class MainWindow(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-
-        self.title("YouTube Downloader")
-        self.geometry("780x660")
-        self.minsize(680, 580)
-
-        icon_path = self._resolve_icon()
-        if icon_path:
-            self.iconbitmap(icon_path)
+class MainWindow(ctk.CTkFrame):
+    def __init__(self, parent, writable_root: str = None):
+        super().__init__(parent, fg_color="transparent")
+        self._writable_root = writable_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         self._msg_queue = None
         self._poll_id = None
         self._cancel_event = None
         self._playlist_result: PlaylistResult = None
         self._running = False
+        self._download_queue = []
+        self._queue_running = False
 
         self._build_ui()
+        self.after(800, self._check_ytdlp_update_available)
+        self._refresh_history()
+
+    def _refresh_history(self):
+        try:
+            rows = history_get_all(self._writable_root)
+            self.history_text.configure(state="normal")
+            self.history_text.delete("1.0", "end")
+            if not rows:
+                self.history_text.insert("end", "No download history yet.\n")
+            else:
+                for r in rows:
+                    _id, title, url, fmt_type, fmt_detail, out_dir, created = r
+                    date_str = created[:10] if len(created) >= 10 else created
+                    self.history_text.insert("end", f"{date_str}  |  {fmt_type} ({fmt_detail})\n  {title}\n  {url}\n\n")
+            self.history_text.configure(state="disabled")
+        except Exception:
+            pass
+
+    def _clear_history(self):
+        if messagebox.askyesno("Clear history", "Delete all download history?"):
+            try:
+                history_clear(self._writable_root)
+                self._refresh_history()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+    def _check_ytdlp_update_available(self):
+        def _version_tuple(v: str):
+            try:
+                return tuple(int(x) for x in v.strip().split(".")[:4])
+            except Exception:
+                return (0,)
+
+        def check():
+            latest = get_latest_version()
+            if latest is None:
+                return
+            current = get_current_version()
+            if not latest or not current or latest == current:
+                return
+            if _version_tuple(latest) > _version_tuple(current):
+                self.after(0, lambda: self.version_var.set(
+                    f"yt-dlp: {current}  (update {latest} available)"
+                ))
+        threading.Thread(target=check, daemon=True).start()
 
     @staticmethod
     def _resolve_icon():
@@ -85,18 +128,40 @@ class MainWindow(ctk.CTk):
         main.pack(fill="both", expand=True, padx=15, pady=10)
 
         # URL
-        ctk.CTkLabel(main, text="YouTube URL (video or playlist):",
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+        ctk.CTkLabel(
+            main,
+            text="Video URL (YouTube, Instagram, TikTok, and 1800+ sites):",
+            font=ctk.CTkFont(size=13),
+        ).pack(anchor="w")
         url_frame = ctk.CTkFrame(main, fg_color="transparent")
         url_frame.pack(fill="x", pady=(2, 8))
         self.url_var = tk.StringVar()
         self.url_entry = ctk.CTkEntry(
             url_frame, textvariable=self.url_var,
-            placeholder_text="https://www.youtube.com/watch?v=...", height=36,
+            placeholder_text="https://www.youtube.com/watch?v=... or any supported URL",
+            height=36,
         )
         self.url_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         ctk.CTkButton(url_frame, text="Paste", width=70, height=36,
-                       command=self._paste_url).pack(side="left")
+                       command=self._paste_url).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(url_frame, text="Fetch preview", width=100, height=36,
+                       command=self._fetch_preview).pack(side="left")
+
+        # Preview (thumbnail + title)
+        self.preview_frame = ctk.CTkFrame(main, fg_color=("gray90", "gray17"), corner_radius=6)
+        self.preview_frame.pack(fill="x", pady=(0, 8))
+        self.preview_inner = ctk.CTkFrame(self.preview_frame, fg_color="transparent")
+        self.preview_inner.pack(fill="x", padx=8, pady=8)
+        self.preview_thumb_label = ctk.CTkLabel(self.preview_inner, text="", width=160, height=90)
+        self.preview_thumb_label.pack(side="left", padx=(0, 10))
+        self.preview_title_var = tk.StringVar(value="")
+        self.preview_title_label = ctk.CTkLabel(
+            self.preview_inner, textvariable=self.preview_title_var,
+            font=ctk.CTkFont(size=12), wraplength=400, anchor="w", justify="left",
+        )
+        self.preview_title_label.pack(side="left", fill="x", expand=True)
+        self._preview_image = None
+        self._preview_temp_file = None
 
         # Format
         fmt_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -148,6 +213,37 @@ class MainWindow(ctk.CTk):
         ctk.CTkButton(out_frame, text="Browse", width=80, height=36,
                        command=self._browse_output).pack(side="left")
 
+        # Cookies (for age-restricted / login-required)
+        cookie_frame = ctk.CTkFrame(main, fg_color="transparent")
+        cookie_frame.pack(fill="x", pady=(0, 6))
+        self.cookie_var = tk.StringVar(value="")
+        ctk.CTkLabel(cookie_frame, text="Cookies:", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(cookie_frame, textvariable=self.cookie_var, height=32, placeholder_text="No cookie file").pack(
+            side="left", fill="x", expand=True, padx=(0, 6))
+        ctk.CTkButton(cookie_frame, text="Load cookies…", width=100, height=32,
+                       command=self._browse_cookies).pack(side="left")
+
+        # Subtitles
+        sub_frame = ctk.CTkFrame(main, fg_color="transparent")
+        sub_frame.pack(fill="x", pady=(0, 6))
+        self.subs_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            sub_frame, text="Download subtitles (SRT)", variable=self.subs_var,
+            font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 12))
+        ctk.CTkLabel(sub_frame, text="Language:", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 6))
+        self.sub_lang_var = tk.StringVar(value="en")
+        SUB_LANG_OPTIONS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "ru", "ar", "hi"]
+        ctk.CTkComboBox(
+            sub_frame, variable=self.sub_lang_var,
+            values=SUB_LANG_OPTIONS, state="readonly", width=80,
+        ).pack(side="left", padx=(0, 16))
+        self.sponsorblock_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            sub_frame, text="Remove sponsors (SponsorBlock)", variable=self.sponsorblock_var,
+            font=ctk.CTkFont(size=13),
+        ).pack(side="left")
+
         # Parallel workers
         parallel_frame = ctk.CTkFrame(main, fg_color="transparent")
         parallel_frame.pack(fill="x", pady=(0, 8))
@@ -170,6 +266,11 @@ class MainWindow(ctk.CTk):
             fg_color="#2563eb", hover_color="#1d4ed8",
         )
         self.download_btn.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            btn_frame, text="Add to Queue", width=100, height=36,
+            command=self._add_to_queue,
+            fg_color="#64748b", hover_color="#475569",
+        ).pack(side="left", padx=(0, 8))
         self.cancel_btn = ctk.CTkButton(
             btn_frame, text="Cancel", width=100, height=36,
             command=self._cancel_download, state="disabled",
@@ -215,6 +316,8 @@ class MainWindow(ctk.CTk):
         self.tabview.pack(fill="both", expand=True)
         self.tabview.add("Progress")
         self.tabview.add("Summary")
+        self.tabview.add("Queue")
+        self.tabview.add("History")
 
         self.log_text = ctk.CTkTextbox(
             self.tabview.tab("Progress"), state="disabled",
@@ -228,7 +331,65 @@ class MainWindow(ctk.CTk):
         )
         self.summary_text.pack(fill="both", expand=True)
 
+        # Queue tab
+        queue_frame = ctk.CTkFrame(self.tabview.tab("Queue"), fg_color="transparent")
+        queue_frame.pack(fill="both", expand=True)
+        ctk.CTkLabel(queue_frame, text="Queued URLs (downloaded one after another):",
+                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+        self.queue_text = ctk.CTkTextbox(
+            queue_frame, state="disabled", height=120,
+            font=ctk.CTkFont(family="Consolas", size=11),
+        )
+        self.queue_text.pack(fill="x", pady=(4, 8))
+        qbtn_frame = ctk.CTkFrame(queue_frame, fg_color="transparent")
+        qbtn_frame.pack(fill="x")
+        ctk.CTkButton(qbtn_frame, text="Start Queue", width=100, command=self._start_queue).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(qbtn_frame, text="Clear Queue", width=100, fg_color="#b91c1c", hover_color="#991b1b", command=self._clear_queue).pack(side="left")
+
+        # History tab
+        hist_frame = ctk.CTkFrame(self.tabview.tab("History"), fg_color="transparent")
+        hist_frame.pack(fill="both", expand=True)
+        self.history_text = ctk.CTkTextbox(
+            hist_frame, state="disabled",
+            font=ctk.CTkFont(family="Consolas", size=11),
+        )
+        self.history_text.pack(fill="both", expand=True)
+        hist_btn_frame = ctk.CTkFrame(hist_frame, fg_color="transparent")
+        hist_btn_frame.pack(fill="x", pady=(4, 0))
+        ctk.CTkButton(hist_btn_frame, text="Refresh", width=80, command=self._refresh_history).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(hist_btn_frame, text="Clear history", width=100, fg_color="#b91c1c", hover_color="#991b1b", command=self._clear_history).pack(side="left")
+
+        # Footer: yt-dlp version + Update button
+        footer = ctk.CTkFrame(main, fg_color="transparent")
+        footer.pack(fill="x", pady=(4, 8))
+        self.version_var = tk.StringVar(value=f"yt-dlp: {get_current_version()}")
+        ctk.CTkLabel(
+            footer, textvariable=self.version_var,
+            font=ctk.CTkFont(size=11), text_color="gray",
+        ).pack(side="left")
+        ctk.CTkButton(
+            footer, text="Update yt-dlp", width=100, height=28,
+            command=self._update_ytdlp_clicked,
+            fg_color="#475569", hover_color="#334155",
+        ).pack(side="right")
+
     # ------------------------------------------------------------------ helpers
+    def _update_ytdlp_clicked(self):
+        def do_update():
+            def progress(msg: str):
+                self.after(0, lambda: self._log(f"[yt-dlp update] {msg}"))
+            ok, message = update_ytdlp(self._writable_root, progress_callback=progress)
+            self.after(0, lambda: _done(ok, message))
+        def _done(ok: bool, message: str):
+            if ok:
+                messagebox.showinfo("yt-dlp updated", message)
+                self.version_var.set("yt-dlp: updated — restart app to use new version")
+            else:
+                messagebox.showerror("Update failed", message)
+        self._log("[yt-dlp update] Checking for update...")
+        threading.Thread(target=do_update, daemon=True).start()
+
+    # ------------------------------------------------------------------ helpers (continued)
     def _toggle_theme(self):
         ctk.set_appearance_mode("dark" if self.theme_switch.get() else "light")
 
@@ -248,11 +409,80 @@ class MainWindow(ctk.CTk):
         except Exception:
             pass
 
+    def _fetch_preview(self):
+        url = self.url_var.get().strip()
+        if not is_supported_url(url):
+            messagebox.showwarning("Invalid URL", "Enter a valid http(s) URL first.")
+            return
+        self.preview_title_var.set("Fetching...")
+        if self._preview_image:
+            self.preview_thumb_label.configure(image=None, text="")
+            self._preview_image = None
+        if self._preview_temp_file and os.path.isfile(self._preview_temp_file):
+            try:
+                os.unlink(self._preview_temp_file)
+            except Exception:
+                pass
+            self._preview_temp_file = None
+
+        def do_fetch():
+            preview = get_video_preview(url)
+            self.after(0, lambda: self._show_preview(preview))
+
+        threading.Thread(target=do_fetch, daemon=True).start()
+
+    def _show_preview(self, preview):
+        if preview is None:
+            self.preview_title_var.set("Could not load preview.")
+            return
+        self.preview_title_var.set(preview.get("title") or "Unknown")
+        thumb_url = preview.get("thumbnail") or ""
+        if not thumb_url:
+            self.preview_thumb_label.configure(image=None, text="No image")
+            return
+        try:
+            path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False).name
+            self._preview_temp_file = path
+            urllib.request.urlretrieve(thumb_url, path)
+            img = ctk.CTkImage(light_image=path, dark_image=path, size=(160, 90))
+            self._preview_image = img
+            self.preview_thumb_label.configure(image=img, text="")
+        except Exception:
+            self.preview_thumb_label.configure(image=None, text="Image load failed")
+
+    def _on_drop(self, event):
+        """Handle URL (or file path) dropped onto the window."""
+        data = (event.data or "").strip()
+        if not data:
+            return
+        # Browser often gives one URL per line or in braces
+        for part in data.replace("{", " ").replace("}", " ").split():
+            part = part.strip()
+            if part.startswith("http://") or part.startswith("https://"):
+                self.url_var.set(part)
+                return
+        if data.startswith("http://") or data.startswith("https://"):
+            self.url_var.set(data)
+            return
+        # Single file path (e.g. from Explorer)
+        if "\n" in data:
+            data = data.split("\n")[0].strip()
+        if data and (data.startswith("http://") or data.startswith("https://")):
+            self.url_var.set(data)
+
     def _browse_output(self):
         path = filedialog.askdirectory(
             title="Select output folder", initialdir=self.out_var.get())
         if path:
             self.out_var.set(path)
+
+    def _browse_cookies(self):
+        path = filedialog.askopenfilename(
+            title="Select cookies.txt (Netscape format)",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if path:
+            self.cookie_var.set(path)
 
     def _open_folder(self):
         folder = self.out_var.get().strip()
@@ -286,12 +516,86 @@ class MainWindow(ctk.CTk):
                 (r.done_count + r.failed_count) / r.total)
 
     # ------------------------------------------------------------------ download
+    def _add_to_queue(self):
+        url = self.url_var.get().strip()
+        if not is_supported_url(url):
+            messagebox.showwarning("Invalid URL", "Enter a valid http(s) URL first.")
+            return
+        self._download_queue.append(url)
+        self._refresh_queue_display()
+
+    def _refresh_queue_display(self):
+        self.queue_text.configure(state="normal")
+        self.queue_text.delete("1.0", "end")
+        for i, u in enumerate(self._download_queue, 1):
+            self.queue_text.insert("end", f"{i}. {u}\n")
+        self.queue_text.configure(state="disabled")
+
+    def _clear_queue(self):
+        self._download_queue.clear()
+        self._refresh_queue_display()
+
+    def _start_queue(self):
+        if not self._download_queue:
+            messagebox.showinfo("Queue empty", "Add URLs to the queue first.")
+            return
+        if self._running:
+            messagebox.showinfo("Busy", "A download is already running.")
+            return
+        out_dir = self.out_var.get().strip()
+        if not out_dir:
+            messagebox.showerror("Error", "Please choose an output folder.")
+            return
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot create output folder: {e}")
+            return
+        self._queue_running = True
+        self._start_next_queued_download()
+
+    def _start_next_queued_download(self):
+        if not self._download_queue:
+            self._queue_running = False
+            self._log("\n--- Queue finished ---")
+            self._set_running(False)
+            return
+        url = self._download_queue.pop(0)
+        self._refresh_queue_display()
+        self.url_var.set(url)
+        self._log(f"\n--- Queue: downloading ({len(self._download_queue)} left) ---")
+        self._clear_log()
+        self._clear_summary()
+        self.stats_var.set("")
+        self.speed_var.set("")
+        self.overall_progress.set(0)
+        self.track_progress.set(0)
+        self._playlist_result = None
+        self._set_running(True)
+        self.tabview.set("Progress")
+        self._cancel_event = threading.Event()
+        sub_langs = [self.sub_lang_var.get().strip()] if self.subs_var.get() else None
+        self._msg_queue, self._cancel_event = start_download(
+            url=url,
+            output_dir=self.out_var.get().strip(),
+            format_type=self.format_var.get(),
+            quality_name=self.quality_var.get(),
+            max_workers=int(self.workers_var.get()),
+            cancel_event=self._cancel_event,
+            audio_format_name=self.audio_fmt_var.get(),
+            write_subs=bool(sub_langs),
+            sub_langs=sub_langs,
+            remove_sponsors=self.sponsorblock_var.get(),
+            cookiefile=self.cookie_var.get().strip() or None,
+        )
+        self._poll_queue()
+
     def _start_download(self):
         url = self.url_var.get().strip()
-        if not is_youtube_url(url):
+        if not is_supported_url(url):
             messagebox.showerror(
                 "Invalid URL",
-                "Please enter a valid YouTube video or playlist URL.")
+                "Please enter a valid http:// or https:// URL (e.g. YouTube, Instagram, TikTok).")
             return
         out_dir = self.out_var.get().strip()
         if not out_dir:
@@ -315,6 +619,7 @@ class MainWindow(ctk.CTk):
 
         self._cancel_event = threading.Event()
 
+        sub_langs = [self.sub_lang_var.get().strip()] if self.subs_var.get() else None
         self._msg_queue, self._cancel_event = start_download(
             url=url,
             output_dir=out_dir,
@@ -323,6 +628,10 @@ class MainWindow(ctk.CTk):
             max_workers=int(self.workers_var.get()),
             cancel_event=self._cancel_event,
             audio_format_name=self.audio_fmt_var.get(),
+            write_subs=bool(sub_langs),
+            sub_langs=sub_langs,
+            remove_sponsors=self.sponsorblock_var.get(),
+            cookiefile=self.cookie_var.get().strip() or None,
         )
         self._poll_queue()
 
@@ -346,6 +655,7 @@ class MainWindow(ctk.CTk):
 
         self._cancel_event = threading.Event()
 
+        sub_langs = [self.sub_lang_var.get().strip()] if self.subs_var.get() else None
         self._msg_queue, self._cancel_event = retry_failed(
             playlist_result=self._playlist_result,
             output_dir=self.out_var.get().strip(),
@@ -354,6 +664,10 @@ class MainWindow(ctk.CTk):
             max_workers=int(self.workers_var.get()),
             cancel_event=self._cancel_event,
             audio_format_name=self.audio_fmt_var.get(),
+            write_subs=bool(sub_langs),
+            sub_langs=sub_langs,
+            remove_sponsors=self.sponsorblock_var.get(),
+            cookiefile=self.cookie_var.get().strip() or None,
         )
         self._poll_queue()
 
@@ -398,6 +712,18 @@ class MainWindow(ctk.CTk):
             self._log(f"[OK] {track.title}")
             self.track_progress.set(1.0)
             self._update_stats()
+            try:
+                fmt_detail = self.quality_var.get() if self.format_var.get() == FORMAT_MP4 else self.audio_fmt_var.get()
+                history_add(
+                    self._writable_root,
+                    title=track.title,
+                    url=track.url,
+                    format_type=self.format_var.get(),
+                    format_detail=fmt_detail,
+                    output_dir=self.out_var.get().strip(),
+                )
+            except Exception:
+                pass
 
         elif msg_type == MSG_TRACK_FAILED:
             track: TrackInfo = payload
@@ -426,6 +752,11 @@ class MainWindow(ctk.CTk):
         self.track_progress.set(0)
         self.tabview.set("Summary")
         self.open_folder_btn.configure(state="normal")
+        if self._queue_running and self._download_queue:
+            self.after(500, self._start_next_queued_download)
+        elif self._queue_running:
+            self._queue_running = False
+            self._log("\n--- Queue finished ---")
 
     def _set_running(self, running: bool):
         self._running = running
@@ -486,6 +817,37 @@ class MainWindow(ctk.CTk):
         self.summary_text.configure(state="disabled")
 
 
-def run():
-    app = MainWindow()
-    app.mainloop()
+def run(writable_root: str = None):
+    try:
+        from tkinterdnd2 import TkinterDnD, DND_TEXT
+        root = TkinterDnD.Tk()
+        use_dnd = True
+    except Exception:
+        root = ctk.CTk()
+        use_dnd = False
+
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("blue")
+    root.title("YouTube Downloader")
+    root.geometry("780x660")
+    root.minsize(680, 580)
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ico = os.path.join(base, "icon.ico")
+    if os.path.isfile(ico):
+        try:
+            root.iconbitmap(ico)
+        except Exception:
+            pass
+
+    app = MainWindow(root, writable_root)
+    app.pack(fill="both", expand=True, padx=0, pady=0)
+    if use_dnd:
+        try:
+            root.drop_target_register(DND_TEXT)
+            root.dnd_bind("<<Drop>>", lambda e: app._on_drop(e))
+        except Exception:
+            pass
+    root.mainloop()
