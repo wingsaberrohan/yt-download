@@ -158,6 +158,7 @@ class MainWindow(ctk.CTkFrame):
         self.preview_title_label = ctk.CTkLabel(
             self.preview_inner, textvariable=self.preview_title_var,
             font=ctk.CTkFont(size=12), wraplength=400, anchor="w", justify="left",
+            text_color=("gray10", "gray90"),
         )
         self.preview_title_label.pack(side="left", fill="x", expand=True)
         self._preview_image = None
@@ -255,7 +256,7 @@ class MainWindow(ctk.CTkFrame):
             values=[str(i) for i in range(1, MAX_WORKERS + 1)], width=60,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkLabel(parallel_frame, text=f"(1 = sequential, up to {MAX_WORKERS})",
-                     text_color="gray", font=ctk.CTkFont(size=11)).pack(side="left")
+                     text_color=("gray40", "gray65"), font=ctk.CTkFont(size=11)).pack(side="left")
 
         # Buttons
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -365,7 +366,7 @@ class MainWindow(ctk.CTkFrame):
         self.version_var = tk.StringVar(value=f"yt-dlp: {get_current_version()}")
         ctk.CTkLabel(
             footer, textvariable=self.version_var,
-            font=ctk.CTkFont(size=11), text_color="gray",
+            font=ctk.CTkFont(size=11), text_color=("gray40", "gray65"),
         ).pack(side="left")
         ctk.CTkButton(
             footer, text="Update yt-dlp", width=100, height=28,
