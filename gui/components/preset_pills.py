@@ -53,11 +53,13 @@ class PresetPills(ctk.CTkFrame):
             btn.bind("<Button-3>", lambda e, idx=i: self._context_menu(e, idx))
             self._pill_buttons.append(btn)
 
-        # '+' chip
+        # '+' chip — override ghost_button's corner_radius for pill shape
+        ghost = ghost_button()
+        ghost["corner_radius"] = 14
         add_btn = ctk.CTkButton(
-            self, text="+", width=28, height=28, corner_radius=14,
+            self, text="+", width=28, height=28,
             command=self._add_from_current,
-            **ghost_button(),
+            **ghost,
         )
         add_btn.pack(side="left")
 

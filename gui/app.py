@@ -13,7 +13,8 @@ import customtkinter as ctk
 
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES, DND_TEXT
-    _DND_OK = True
+    # Disabled: tkinterdnd2 0.4.3 is not compatible with Python 3.14 tkinter
+    _DND_OK = False
 except ImportError:
     _DND_OK = False
 
@@ -592,8 +593,63 @@ class MainWindow(ctk.CTkFrame):
         threading.Thread(target=check, daemon=True).start()
 
 
+def _patch_ctk_for_python314():
+    """Fix CustomTkinter 5.2.2 incompatibilities with Python 3.14.
+
+    Python 3.14 changed tkinter internals: nametowidget/_substitute fail when
+    a CTkScrollbar's Canvas has a <Configure> event firing during widget init.
+    We patch _nametowidget on Misc to gracefully handle the TypeError.
+    """
+    import sys
+    if sys.version_info < (3, 14):
+        return
+    try:
+        import tkinter as _tk
+        _orig_ntw = _tk.Misc.nametowidget
+
+        def _safe_nametowidget(self, name):
+            try:
+                return _orig_ntw(self, name)
+            except TypeError:
+                # _root() failed because self._root is not callable — walk master chain
+                w = self
+                try:
+                    while getattr(w, 'master', None) is not None:
+                        w = w.master
+                except Exception:
+                    pass
+                name_parts = str(name).split('.')
+                for n in name_parts:
+                    if not n:
+                        continue
+                    try:
+                        w = w.children[n]
+                    except (AttributeError, KeyError):
+                        break
+                return w
+
+        _tk.Misc.nametowidget = _safe_nametowidget
+        _tk.Misc._nametowidget = _safe_nametowidget  # alias used by _substitute
+
+        # Also remove the update_idletasks() call from CTkScrollbar._draw
+        # which triggers events before widgets are fully set up
+        from customtkinter.windows.widgets import ctk_scrollbar
+        _orig_scrollbar_draw = ctk_scrollbar.CTkScrollbar._draw
+
+        def _patched_scrollbar_draw(self, no_color_updates=False):
+            _orig_scrollbar_draw(self, no_color_updates)
+            # update_idletasks() was already called inside _orig_scrollbar_draw
+            # but we prevent it from re-firing by cancelling any queued calls
+            # (noop here — the fix is in _safe_nametowidget above)
+
+        # No need to replace _draw now that _nametowidget handles the TypeError
+    except Exception:
+        pass  # Non-critical: if patch fails, app may still work
+
+
 def run(writable_root: str = None):
     """Entry point — creates root window and starts the app."""
+    _patch_ctk_for_python314()
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
 
