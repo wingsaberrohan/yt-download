@@ -7,6 +7,9 @@ ffmpeg*.zip
 # Downloads output
 downloads/
 
+# Local download history DB
+download_history/
+
 # Python
 venv/
 .venv/

@@ -67,6 +67,7 @@ MSG_PLAYLIST_INFO = "playlist_info"
 MSG_TRACK_START = "track_start"
 MSG_TRACK_PROGRESS = "track_progress"
 MSG_TRACK_PERCENT = "track_percent"
+MSG_TRACK_PHASE = "track_phase"
 MSG_TRACK_DONE = "track_done"
 MSG_TRACK_FAILED = "track_failed"
 MSG_LOG = "log"
@@ -189,6 +190,11 @@ def _build_ydl_opts(
         ]
     if cookiefile and os.path.isfile(cookiefile):
         opts["cookiefile"] = cookiefile
+
+    # Faster DASH/HLS: parallel fragments + larger HTTP chunks (within yt-dlp)
+    opts["concurrent_fragment_downloads"] = 6
+    opts["http_chunk_size"] = 10 * 1024 * 1024  # 10 MiB
+
     return opts
 
 
@@ -320,7 +326,8 @@ def _download_single_track(
         if cancel_event and cancel_event.is_set():
             raise _DownloadCancelled("Download cancelled by user")
 
-        if d.get("status") == "downloading":
+        st = d.get("status")
+        if st == "downloading":
             downloaded = d.get("downloaded_bytes", 0) or 0
             total_bytes = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             speed = d.get("speed")
@@ -330,7 +337,11 @@ def _download_single_track(
             if total_bytes > 0:
                 pct_float = min(downloaded / total_bytes, 1.0)
 
-            message_queue.put((MSG_TRACK_PERCENT, (track.index, pct_float, speed_str)))
+            tb = int(total_bytes) if total_bytes else None
+            message_queue.put((
+                MSG_TRACK_PERCENT,
+                (track.index, pct_float, speed_str, int(downloaded), tb),
+            ))
 
             pct = d.get("_percent_str", "").strip()
             eta = d.get("_eta_str", "").strip()
@@ -341,6 +352,23 @@ def _download_single_track(
                 if eta:
                     msg += f" ETA {eta}"
                 message_queue.put((MSG_TRACK_PROGRESS, msg))
+        elif st == "finished" and d.get("postprocessor") is None:
+            # Download bytes complete; FFmpeg/postprocessors may still run
+            message_queue.put((
+                MSG_TRACK_PHASE,
+                (track.index, "Processing…"),
+            ))
+
+    def postprocessor_hook(d):
+        try:
+            if d.get("status") == "started":
+                pp = d.get("postprocessor") or "convert"
+                message_queue.put((
+                    MSG_TRACK_PHASE,
+                    (track.index, f"Converting ({pp})…"),
+                ))
+        except Exception:
+            pass
 
     base_opts = _build_ydl_opts(
         format_type, quality_name, output_dir,
@@ -353,6 +381,9 @@ def _download_single_track(
         cookiefile=cookiefile,
     )
     base_opts["noplaylist"] = True
+    pph = list(base_opts.get("postprocessor_hooks") or [])
+    pph.append(postprocessor_hook)
+    base_opts["postprocessor_hooks"] = pph
 
     last_error = None
     for strategy in FALLBACK_STRATEGIES:

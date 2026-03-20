@@ -2,6 +2,8 @@
 Modern CustomTkinter GUI: progress bars, cancel, paste, open folder,
 audio format selection, dark/light toggle, and download speed display.
 """
+from dataclasses import dataclass
+
 import os
 import re
 import sys
@@ -21,7 +23,7 @@ from downloader import (
     FORMAT_AUDIO, FORMAT_MP4, MP4_QUALITIES, AUDIO_FORMATS,
     PlaylistResult, TrackInfo,
     MSG_PLAYLIST_INFO, MSG_TRACK_START, MSG_TRACK_PROGRESS,
-    MSG_TRACK_PERCENT, MSG_TRACK_DONE, MSG_TRACK_FAILED,
+    MSG_TRACK_PERCENT, MSG_TRACK_PHASE, MSG_TRACK_DONE, MSG_TRACK_FAILED,
     MSG_LOG, MSG_FINISHED,
     DEFAULT_WORKERS, MAX_WORKERS,
     get_current_version, get_latest_version, update_ytdlp,
@@ -43,6 +45,64 @@ def is_supported_url(text: str) -> bool:
     return s.startswith("http://") or s.startswith("https://")
 
 
+def _fmt_mb_pair(downloaded: int | None, total: int | None) -> str:
+    if downloaded is None:
+        return ""
+    if total and total > 0:
+        return f"{downloaded / 1_048_576:.1f} / {total / 1_048_576:.1f} MB"
+    if downloaded > 0:
+        return f"{downloaded / 1_048_576:.1f} MB"
+    return ""
+
+
+@dataclass
+class _TrackRowUI:
+    """One row in the per-track downloads list."""
+    frame: ctk.CTkFrame
+    title_lbl: ctk.CTkLabel
+    meta_lbl: ctk.CTkLabel
+    status_lbl: ctk.CTkLabel
+    bytes_lbl: ctk.CTkLabel
+    bar: ctk.CTkProgressBar
+
+    def set_queued(self) -> None:
+        self.status_lbl.configure(text="Queued")
+        self.bar.set(0)
+        self.bytes_lbl.configure(text="")
+
+    def set_downloading(self, speed_str: str = "") -> None:
+        t = "Downloading"
+        if speed_str:
+            t = f"Downloading — {speed_str}"
+        self.status_lbl.configure(text=t)
+
+    def update_progress(
+        self,
+        pct: float,
+        speed_str: str,
+        downloaded: int | None,
+        total: int | None,
+    ) -> None:
+        self.bar.set(pct)
+        if speed_str:
+            self.status_lbl.configure(text=f"Downloading — {speed_str}")
+        else:
+            self.status_lbl.configure(text="Downloading")
+        self.bytes_lbl.configure(text=_fmt_mb_pair(downloaded, total))
+
+    def set_phase(self, phase: str) -> None:
+        self.status_lbl.configure(text=phase)
+
+    def set_done(self) -> None:
+        self.status_lbl.configure(text="Done")
+        self.bar.set(1.0)
+
+    def set_failed(self, err: str) -> None:
+        short = err if len(err) <= 100 else err[:97] + "…"
+        self.status_lbl.configure(text=f"Failed: {short}")
+        self.bar.set(0)
+
+
 class MainWindow(ctk.CTkFrame):
     def __init__(self, parent, writable_root: str = None):
         super().__init__(parent, fg_color="transparent")
@@ -56,10 +116,13 @@ class MainWindow(ctk.CTkFrame):
         self._download_queue = []
         self._queue_running = False
         self._telegram_uploading = False
+        self._scroll_resize_job = None
+        self._track_rows: dict[int, _TrackRowUI] = {}
 
         self._build_ui()
         self.after(800, self._check_ytdlp_update_available)
         self._refresh_history()
+        self.after(150, lambda: self.url_entry.focus_set())
 
     def _refresh_history(self):
         try:
@@ -114,9 +177,43 @@ class MainWindow(ctk.CTkFrame):
         ico = os.path.join(base, "icon.ico")
         return ico if os.path.isfile(ico) else None
 
+    def _schedule_settings_scroll_height(self, _event=None):
+        """Resize settings panel height so tabview keeps most vertical space (small screens)."""
+        if self._scroll_resize_job:
+            try:
+                self.after_cancel(self._scroll_resize_job)
+            except Exception:
+                pass
+        self._scroll_resize_job = self.after(100, self._resize_settings_scroll)
+
+    def _resize_settings_scroll(self):
+        self._scroll_resize_job = None
+        try:
+            h = self.winfo_height()
+            if h < 200:
+                return
+            # ~30% of window, clamped — leaves ~40%+ for tabs + chrome on ~820px height
+            sh = max(160, min(380, int(h * 0.30)))
+            self.settings_scroll.configure(height=sh)
+        except Exception:
+            pass
+
+    def _on_self_configure(self, event):
+        if event.widget is not self:
+            return
+        self._schedule_settings_scroll_height()
+
     def _build_ui(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=0)
+        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(4, weight=0)
+        self.bind("<Configure>", self._on_self_configure)
+
         top_bar = ctk.CTkFrame(self, fg_color="transparent")
-        top_bar.pack(fill="x", padx=15, pady=(10, 0))
+        top_bar.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 4))
 
         ctk.CTkLabel(
             top_bar, text="YouTube Downloader",
@@ -130,16 +227,19 @@ class MainWindow(ctk.CTkFrame):
         self.theme_switch.pack(side="right")
         self.theme_switch.select()
 
-        main = ctk.CTkFrame(self, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=15, pady=10)
+        # Scrollable settings (URL → workers); height adjusted on resize
+        self.settings_scroll = ctk.CTkScrollableFrame(
+            self, fg_color="transparent", corner_radius=0, height=280,
+        )
+        self.settings_scroll.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 6))
+        sc = self.settings_scroll
 
-        # URL
         ctk.CTkLabel(
-            main,
+            sc,
             text="Video URL (YouTube, Instagram, TikTok, and 1800+ sites):",
             font=ctk.CTkFont(size=13),
         ).pack(anchor="w")
-        url_frame = ctk.CTkFrame(main, fg_color="transparent")
+        url_frame = ctk.CTkFrame(sc, fg_color="transparent")
         url_frame.pack(fill="x", pady=(2, 8))
         self.url_var = tk.StringVar()
         self.url_entry = ctk.CTkEntry(
@@ -148,32 +248,37 @@ class MainWindow(ctk.CTkFrame):
             height=36,
         )
         self.url_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        ctk.CTkButton(url_frame, text="Paste", width=70, height=36,
-                       command=self._paste_url).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(url_frame, text="Fetch preview", width=100, height=36,
-                       command=self._fetch_preview).pack(side="left")
+        ctk.CTkButton(
+            url_frame, text="Paste", width=70, height=36,
+            command=self._paste_url,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            url_frame, text="Fetch preview", width=100, height=36,
+            command=self._fetch_preview,
+        ).pack(side="left")
 
-        # Preview (thumbnail + title)
-        self.preview_frame = ctk.CTkFrame(main, fg_color=("gray90", "gray17"), corner_radius=6)
+        self.preview_frame = ctk.CTkFrame(sc, fg_color=("gray90", "gray17"), corner_radius=6)
         self.preview_frame.pack(fill="x", pady=(0, 8))
         self.preview_inner = ctk.CTkFrame(self.preview_frame, fg_color="transparent")
         self.preview_inner.pack(fill="x", padx=8, pady=8)
-        self.preview_thumb_label = ctk.CTkLabel(self.preview_inner, text="", width=160, height=90)
+        self.preview_thumb_label = ctk.CTkLabel(
+            self.preview_inner, text="", width=140, height=79,
+        )
         self.preview_thumb_label.pack(side="left", padx=(0, 10))
         self.preview_title_var = tk.StringVar(value="")
         self.preview_title_label = ctk.CTkLabel(
             self.preview_inner, textvariable=self.preview_title_var,
-            font=ctk.CTkFont(size=12), wraplength=400, anchor="w", justify="left",
+            font=ctk.CTkFont(size=12), wraplength=360, anchor="w", justify="left",
         )
         self.preview_title_label.pack(side="left", fill="x", expand=True)
         self._preview_image = None
         self._preview_temp_file = None
 
-        # Format
-        fmt_frame = ctk.CTkFrame(main, fg_color="transparent")
+        fmt_frame = ctk.CTkFrame(sc, fg_color="transparent")
         fmt_frame.pack(fill="x", pady=(0, 6))
-        ctk.CTkLabel(fmt_frame, text="Format:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(
+            fmt_frame, text="Format:", font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 10))
         self.format_var = tk.StringVar(value=FORMAT_AUDIO)
         ctk.CTkRadioButton(
             fmt_frame, text="Audio", variable=self.format_var,
@@ -184,13 +289,13 @@ class MainWindow(ctk.CTkFrame):
             value=FORMAT_MP4, command=self._on_format_change,
         ).pack(side="left")
 
-        # Audio format / Video quality (in separate sub-frames for clean toggle)
-        self.options_container = ctk.CTkFrame(main, fg_color="transparent")
+        self.options_container = ctk.CTkFrame(sc, fg_color="transparent")
         self.options_container.pack(fill="x", pady=(0, 6))
 
         self.audio_options = ctk.CTkFrame(self.options_container, fg_color="transparent")
-        ctk.CTkLabel(self.audio_options, text="Audio format:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(
+            self.audio_options, text="Audio format:", font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 8))
         self.audio_fmt_var = tk.StringVar(value=AUDIO_FORMATS[0][0])
         ctk.CTkComboBox(
             self.audio_options, variable=self.audio_fmt_var,
@@ -198,8 +303,9 @@ class MainWindow(ctk.CTkFrame):
         ).pack(side="left")
 
         self.video_options = ctk.CTkFrame(self.options_container, fg_color="transparent")
-        ctk.CTkLabel(self.video_options, text="Video quality:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(
+            self.video_options, text="Video quality:", font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 8))
         self.quality_var = tk.StringVar(value=MP4_QUALITIES[0][0])
         ctk.CTkComboBox(
             self.video_options, variable=self.quality_var,
@@ -208,41 +314,52 @@ class MainWindow(ctk.CTkFrame):
 
         self._on_format_change()
 
-        # Output folder
-        ctk.CTkLabel(main, text="Output folder:",
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
-        out_frame = ctk.CTkFrame(main, fg_color="transparent")
+        ctk.CTkLabel(
+            sc, text="Output folder:", font=ctk.CTkFont(size=13),
+        ).pack(anchor="w")
+        out_frame = ctk.CTkFrame(sc, fg_color="transparent")
         out_frame.pack(fill="x", pady=(2, 6))
         self.out_var = tk.StringVar(value=os.path.abspath("downloads"))
-        ctk.CTkEntry(out_frame, textvariable=self.out_var, height=36).pack(
-            side="left", fill="x", expand=True, padx=(0, 6))
-        ctk.CTkButton(out_frame, text="Browse", width=80, height=36,
-                       command=self._browse_output).pack(side="left")
+        ctk.CTkEntry(
+            out_frame, textvariable=self.out_var, height=36,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ctk.CTkButton(
+            out_frame, text="Browse", width=80, height=36,
+            command=self._browse_output,
+        ).pack(side="left")
 
-        # Cookies (for age-restricted / login-required)
-        cookie_frame = ctk.CTkFrame(main, fg_color="transparent")
+        cookie_frame = ctk.CTkFrame(sc, fg_color="transparent")
         cookie_frame.pack(fill="x", pady=(0, 6))
         self.cookie_var = tk.StringVar(value="")
-        ctk.CTkLabel(cookie_frame, text="Cookies:", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
-        ctk.CTkEntry(cookie_frame, textvariable=self.cookie_var, height=32, placeholder_text="No cookie file").pack(
-            side="left", fill="x", expand=True, padx=(0, 6))
-        ctk.CTkButton(cookie_frame, text="Load cookies…", width=100, height=32,
-                       command=self._browse_cookies).pack(side="left")
+        ctk.CTkLabel(
+            cookie_frame, text="Cookies:", font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(
+            cookie_frame, textvariable=self.cookie_var, height=32,
+            placeholder_text="No cookie file",
+        ).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ctk.CTkButton(
+            cookie_frame, text="Load cookies…", width=100, height=32,
+            command=self._browse_cookies,
+        ).pack(side="left")
 
-        # Subtitles
-        sub_frame = ctk.CTkFrame(main, fg_color="transparent")
+        sub_frame = ctk.CTkFrame(sc, fg_color="transparent")
         sub_frame.pack(fill="x", pady=(0, 6))
         self.subs_var = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             sub_frame, text="Download subtitles (SRT)", variable=self.subs_var,
             font=ctk.CTkFont(size=13),
         ).pack(side="left", padx=(0, 12))
-        ctk.CTkLabel(sub_frame, text="Language:", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(
+            sub_frame, text="Language:", font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 6))
         self.sub_lang_var = tk.StringVar(value="en")
-        SUB_LANG_OPTIONS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "ru", "ar", "hi"]
+        sub_lang_options = [
+            "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "ru", "ar", "hi",
+        ]
         ctk.CTkComboBox(
             sub_frame, variable=self.sub_lang_var,
-            values=SUB_LANG_OPTIONS, state="readonly", width=80,
+            values=sub_lang_options, state="readonly", width=80,
         ).pack(side="left", padx=(0, 16))
         self.sponsorblock_var = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(
@@ -250,54 +367,37 @@ class MainWindow(ctk.CTkFrame):
             font=ctk.CTkFont(size=13),
         ).pack(side="left")
 
-        # Parallel workers
-        parallel_frame = ctk.CTkFrame(main, fg_color="transparent")
+        parallel_frame = ctk.CTkFrame(sc, fg_color="transparent")
         parallel_frame.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(parallel_frame, text="Parallel downloads:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(
+            parallel_frame, text="Parallel downloads:", font=ctk.CTkFont(size=13),
+        ).pack(side="left", padx=(0, 8))
         self.workers_var = tk.StringVar(value=str(DEFAULT_WORKERS))
         ctk.CTkOptionMenu(
             parallel_frame, variable=self.workers_var,
             values=[str(i) for i in range(1, MAX_WORKERS + 1)], width=60,
         ).pack(side="left", padx=(0, 8))
-        ctk.CTkLabel(parallel_frame, text=f"(1 = sequential, up to {MAX_WORKERS})",
-                     text_color=("gray50", "#AAB0B8"), font=ctk.CTkFont(size=11)).pack(side="left")
+        ctk.CTkLabel(
+            parallel_frame, text=f"(1 = sequential, up to {MAX_WORKERS})",
+            text_color=("gray50", "#AAB0B8"), font=ctk.CTkFont(size=11),
+        ).pack(side="left")
 
-        # Upload to Telegram (v3) – only if module is available. Off by default; user must opt in.
+        # Telegram (same vars; UI lives in tab — built after tabview exists)
         self.telegram_var = tk.BooleanVar(value=False)
-        self.telegram_token_var = tk.StringVar(value=os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+        self.telegram_token_var = tk.StringVar(
+            value=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+        )
         self.telegram_channel_var = tk.StringVar(value="@wing_karaoke")
         self.telegram_topic_var = tk.StringVar(value="")
         self.telegram_album_var = tk.StringVar(value="No")
         self.telegram_workers_var = tk.StringVar(value="5")
-        self.telegram_frame = ctk.CTkFrame(main, fg_color=("gray90", "gray20"), corner_radius=6)
-        tg_inner = ctk.CTkFrame(self.telegram_frame, fg_color="transparent")
-        tg_inner.pack(fill="x", padx=10, pady=8)
-        ctk.CTkCheckBox(
-            tg_inner, text="Upload to Telegram after download",
-            variable=self.telegram_var, font=ctk.CTkFont(size=13),
-            command=self._on_telegram_toggle,
-        ).pack(anchor="w")
-        self.telegram_opts = ctk.CTkFrame(tg_inner, fg_color="transparent")
-        self.telegram_opts.pack(fill="x", pady=(6, 0))
-        ctk.CTkLabel(self.telegram_opts, text="Bot token:", font=ctk.CTkFont(size=12)).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
-        ctk.CTkEntry(self.telegram_opts, textvariable=self.telegram_token_var, width=280, height=28, placeholder_text="Or set TELEGRAM_BOT_TOKEN").grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
-        ctk.CTkLabel(self.telegram_opts, text="Channel:", font=ctk.CTkFont(size=12)).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
-        ctk.CTkEntry(self.telegram_opts, textvariable=self.telegram_channel_var, width=180, height=28, placeholder_text="@channel").grid(row=1, column=1, sticky="w", padx=(0, 8), pady=2)
-        ctk.CTkLabel(self.telegram_opts, text="Topic ID (folder):", font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
-        ctk.CTkEntry(self.telegram_opts, textvariable=self.telegram_topic_var, width=100, height=28, placeholder_text="Optional").grid(row=2, column=1, sticky="w", padx=(0, 8), pady=2)
-        ctk.CTkLabel(self.telegram_opts, text="Group as albums:", font=ctk.CTkFont(size=12)).grid(row=3, column=0, sticky="w", padx=(0, 6), pady=2)
-        ctk.CTkOptionMenu(self.telegram_opts, variable=self.telegram_album_var, values=["No", "5 per message", "10 per message"], width=140).grid(row=3, column=1, sticky="w", padx=(0, 8), pady=2)
-        ctk.CTkLabel(self.telegram_opts, text="Upload workers:", font=ctk.CTkFont(size=12)).grid(row=4, column=0, sticky="w", padx=(0, 6), pady=2)
-        ctk.CTkOptionMenu(self.telegram_opts, variable=self.telegram_workers_var, values=[str(i) for i in range(1, 17)], width=60).grid(row=4, column=1, sticky="w", padx=(0, 8), pady=2)
-        self.telegram_opts.grid_columnconfigure(1, weight=1)
-        if upload_folder_to_telegram:
-            self.telegram_frame.pack(fill="x", pady=(0, 8))
-        self._on_telegram_toggle()
 
-        # Buttons
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(4, 6))
+        # Runtime strip: always visible (not inside scroll)
+        runtime = ctk.CTkFrame(self, fg_color="transparent")
+        runtime.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 4))
+
+        btn_frame = ctk.CTkFrame(runtime, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(2, 4))
         self.download_btn = ctk.CTkButton(
             btn_frame, text="Download", width=120, height=36,
             command=self._start_download,
@@ -328,78 +428,181 @@ class MainWindow(ctk.CTkFrame):
         )
         self.open_folder_btn.pack(side="left")
 
-        # Stats + speed
-        stats_frame = ctk.CTkFrame(main, fg_color="transparent")
-        stats_frame.pack(fill="x", pady=(2, 2))
+        stats_frame = ctk.CTkFrame(runtime, fg_color="transparent")
+        stats_frame.pack(fill="x", pady=(0, 2))
         self.stats_var = tk.StringVar(value="")
-        ctk.CTkLabel(stats_frame, textvariable=self.stats_var,
-                     font=ctk.CTkFont(size=12, weight="bold")).pack(side="left")
+        ctk.CTkLabel(
+            stats_frame, textvariable=self.stats_var,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(side="left")
         self.speed_var = tk.StringVar(value="")
-        ctk.CTkLabel(stats_frame, textvariable=self.speed_var,
-                     font=ctk.CTkFont(size=12),
-                     text_color="#60a5fa").pack(side="right")
+        ctk.CTkLabel(
+            stats_frame, textvariable=self.speed_var,
+            font=ctk.CTkFont(size=12),
+            text_color=("#1d4ed8", "#60a5fa"),
+        ).pack(side="right")
 
-        # Overall progress bar
-        self.overall_progress = ctk.CTkProgressBar(main, height=8)
+        self.overall_progress = ctk.CTkProgressBar(runtime, height=8)
         self.overall_progress.pack(fill="x", pady=(2, 2))
         self.overall_progress.set(0)
 
-        # Per-track progress bar
-        self.track_progress = ctk.CTkProgressBar(main, height=6)
-        self.track_progress.pack(fill="x", pady=(0, 4))
-        self.track_progress.set(0)
-
-        # Tabs: Progress + Summary
-        self.tabview = ctk.CTkTabview(main)
-        self.tabview.pack(fill="both", expand=True)
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.grid(row=3, column=0, sticky="nsew", padx=15, pady=(0, 4))
         self.tabview.add("Progress")
+        self.tabview.add("Log")
         self.tabview.add("Summary")
         self.tabview.add("Queue")
         self.tabview.add("History")
 
+        tab_prog = self.tabview.tab("Progress")
+        tab_prog.grid_columnconfigure(0, weight=1)
+        tab_prog.grid_rowconfigure(0, weight=1)
+        self.downloads_scroll = ctk.CTkScrollableFrame(
+            tab_prog, fg_color="transparent", corner_radius=0,
+        )
+        self.downloads_scroll.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self._rows_container = ctk.CTkFrame(
+            self.downloads_scroll, fg_color="transparent",
+        )
+        self._rows_container.pack(fill="x", expand=True)
+        ctk.CTkLabel(
+            tab_prog,
+            text="Per-item progress above — technical output on the Log tab.",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray40", "#8899A8"),
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 4))
+
         self.log_text = ctk.CTkTextbox(
-            self.tabview.tab("Progress"), state="disabled",
+            self.tabview.tab("Log"), state="disabled",
             font=ctk.CTkFont(family="Consolas", size=12),
         )
-        self.log_text.pack(fill="both", expand=True)
+        self.log_text.pack(fill="both", expand=True, padx=4, pady=4)
 
+        tab_sum = self.tabview.tab("Summary")
+        tab_sum.grid_columnconfigure(0, weight=1)
+        tab_sum.grid_rowconfigure(0, weight=1)
+        tab_sum.grid_rowconfigure(1, weight=2)
+        self.summary_rows_scroll = ctk.CTkScrollableFrame(
+            tab_sum, fg_color="transparent", corner_radius=0,
+        )
+        self.summary_rows_scroll.grid(row=0, column=0, sticky="nsew", padx=4, pady=(4, 2))
+        self._summary_rows_inner = ctk.CTkFrame(
+            self.summary_rows_scroll, fg_color="transparent",
+        )
+        self._summary_rows_inner.pack(fill="x", expand=True)
         self.summary_text = ctk.CTkTextbox(
-            self.tabview.tab("Summary"), state="disabled",
+            tab_sum, state="disabled",
             font=ctk.CTkFont(family="Consolas", size=12),
         )
-        self.summary_text.pack(fill="both", expand=True)
+        self.summary_text.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2, 4))
 
-        # Queue tab
-        queue_frame = ctk.CTkFrame(self.tabview.tab("Queue"), fg_color="transparent")
+        tab_queue = self.tabview.tab("Queue")
+        queue_frame = ctk.CTkFrame(tab_queue, fg_color="transparent")
         queue_frame.pack(fill="both", expand=True)
-        ctk.CTkLabel(queue_frame, text="Queued URLs (downloaded one after another):",
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+        queue_frame.grid_columnconfigure(0, weight=1)
+        queue_frame.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            queue_frame, text="Queued URLs (downloaded one after another):",
+            font=ctk.CTkFont(size=13),
+        ).grid(row=0, column=0, sticky="w")
         self.queue_text = ctk.CTkTextbox(
-            queue_frame, state="disabled", height=120,
+            queue_frame, state="disabled",
             font=ctk.CTkFont(family="Consolas", size=11),
         )
-        self.queue_text.pack(fill="x", pady=(4, 8))
+        self.queue_text.grid(row=1, column=0, sticky="nsew", pady=(4, 8))
         qbtn_frame = ctk.CTkFrame(queue_frame, fg_color="transparent")
-        qbtn_frame.pack(fill="x")
-        ctk.CTkButton(qbtn_frame, text="Start Queue", width=100, command=self._start_queue).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(qbtn_frame, text="Clear Queue", width=100, fg_color="#b91c1c", hover_color="#991b1b", command=self._clear_queue).pack(side="left")
+        qbtn_frame.grid(row=2, column=0, sticky="ew")
+        ctk.CTkButton(
+            qbtn_frame, text="Start Queue", width=100,
+            command=self._start_queue,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            qbtn_frame, text="Clear Queue", width=100,
+            fg_color="#b91c1c", hover_color="#991b1b", command=self._clear_queue,
+        ).pack(side="left")
 
-        # History tab
-        hist_frame = ctk.CTkFrame(self.tabview.tab("History"), fg_color="transparent")
+        tab_hist = self.tabview.tab("History")
+        hist_frame = ctk.CTkFrame(tab_hist, fg_color="transparent")
         hist_frame.pack(fill="both", expand=True)
+        hist_frame.grid_columnconfigure(0, weight=1)
+        hist_frame.grid_rowconfigure(0, weight=1)
         self.history_text = ctk.CTkTextbox(
             hist_frame, state="disabled",
             font=ctk.CTkFont(family="Consolas", size=11),
         )
-        self.history_text.pack(fill="both", expand=True)
+        self.history_text.grid(row=0, column=0, sticky="nsew")
         hist_btn_frame = ctk.CTkFrame(hist_frame, fg_color="transparent")
-        hist_btn_frame.pack(fill="x", pady=(4, 0))
-        ctk.CTkButton(hist_btn_frame, text="Refresh", width=80, command=self._refresh_history).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(hist_btn_frame, text="Clear history", width=100, fg_color="#b91c1c", hover_color="#991b1b", command=self._clear_history).pack(side="left")
+        hist_btn_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        ctk.CTkButton(
+            hist_btn_frame, text="Refresh", width=80,
+            command=self._refresh_history,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            hist_btn_frame, text="Clear history", width=100,
+            fg_color="#b91c1c", hover_color="#991b1b", command=self._clear_history,
+        ).pack(side="left")
 
-        # Footer: yt-dlp version + Update button
-        footer = ctk.CTkFrame(main, fg_color="transparent")
-        footer.pack(fill="x", pady=(4, 8))
+        if upload_folder_to_telegram:
+            self.tabview.add("Upload to Telegram")
+            tg_tab = self.tabview.tab("Upload to Telegram")
+            tg_wrap = ctk.CTkScrollableFrame(tg_tab, fg_color="transparent", corner_radius=0)
+            tg_wrap.pack(fill="both", expand=True)
+            self.telegram_frame = ctk.CTkFrame(
+                tg_wrap, fg_color=("gray90", "gray20"), corner_radius=6,
+            )
+            self.telegram_frame.pack(fill="x", pady=(0, 8))
+            tg_inner = ctk.CTkFrame(self.telegram_frame, fg_color="transparent")
+            tg_inner.pack(fill="x", padx=10, pady=8)
+            ctk.CTkCheckBox(
+                tg_inner, text="Upload to Telegram after download",
+                variable=self.telegram_var, font=ctk.CTkFont(size=13),
+                command=self._on_telegram_toggle,
+            ).pack(anchor="w")
+            self.telegram_opts = ctk.CTkFrame(tg_inner, fg_color="transparent")
+            self.telegram_opts.pack(fill="x", pady=(6, 0))
+            ctk.CTkLabel(
+                self.telegram_opts, text="Bot token:", font=ctk.CTkFont(size=12),
+            ).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+            ctk.CTkEntry(
+                self.telegram_opts, textvariable=self.telegram_token_var,
+                width=280, height=28, placeholder_text="Or set TELEGRAM_BOT_TOKEN",
+            ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
+            ctk.CTkLabel(
+                self.telegram_opts, text="Channel:", font=ctk.CTkFont(size=12),
+            ).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+            ctk.CTkEntry(
+                self.telegram_opts, textvariable=self.telegram_channel_var,
+                width=180, height=28, placeholder_text="@channel",
+            ).grid(row=1, column=1, sticky="w", padx=(0, 8), pady=2)
+            ctk.CTkLabel(
+                self.telegram_opts, text="Topic ID (folder):",
+                font=ctk.CTkFont(size=12),
+            ).grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+            ctk.CTkEntry(
+                self.telegram_opts, textvariable=self.telegram_topic_var,
+                width=100, height=28, placeholder_text="Optional",
+            ).grid(row=2, column=1, sticky="w", padx=(0, 8), pady=2)
+            ctk.CTkLabel(
+                self.telegram_opts, text="Group as albums:",
+                font=ctk.CTkFont(size=12),
+            ).grid(row=3, column=0, sticky="w", padx=(0, 6), pady=2)
+            ctk.CTkOptionMenu(
+                self.telegram_opts, variable=self.telegram_album_var,
+                values=["No", "5 per message", "10 per message"], width=140,
+            ).grid(row=3, column=1, sticky="w", padx=(0, 8), pady=2)
+            ctk.CTkLabel(
+                self.telegram_opts, text="Upload workers:",
+                font=ctk.CTkFont(size=12),
+            ).grid(row=4, column=0, sticky="w", padx=(0, 6), pady=2)
+            ctk.CTkOptionMenu(
+                self.telegram_opts, variable=self.telegram_workers_var,
+                values=[str(i) for i in range(1, 17)], width=60,
+            ).grid(row=4, column=1, sticky="w", padx=(0, 8), pady=2)
+            self.telegram_opts.grid_columnconfigure(1, weight=1)
+            self._on_telegram_toggle()
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=4, column=0, sticky="ew", padx=15, pady=(2, 8))
         self.version_var = tk.StringVar(value=f"yt-dlp: {get_current_version()}")
         ctk.CTkLabel(
             footer, textvariable=self.version_var,
@@ -410,6 +613,8 @@ class MainWindow(ctk.CTkFrame):
             command=self._update_ytdlp_clicked,
             fg_color="#475569", hover_color="#334155",
         ).pack(side="right")
+
+        self.after_idle(self._resize_settings_scroll)
 
     # ------------------------------------------------------------------ helpers
     def _update_ytdlp_clicked(self):
@@ -432,9 +637,16 @@ class MainWindow(ctk.CTkFrame):
         ctk.set_appearance_mode("dark" if self.theme_switch.get() else "light")
 
     def _on_telegram_toggle(self):
+        if not getattr(self, "telegram_opts", None):
+            return
         enabled = self.telegram_var.get()
         for child in self.telegram_opts.winfo_children():
-            child.configure(state="normal" if enabled else "disabled")
+            if isinstance(child, ctk.CTkLabel):
+                continue
+            try:
+                child.configure(state="normal" if enabled else "disabled")
+            except (tk.TclError, TypeError, ValueError):
+                pass
 
     def _telegram_upload_done(self, ok: int, fail: int, error: str | None = None) -> None:
         self._telegram_uploading = False
@@ -495,7 +707,7 @@ class MainWindow(ctk.CTkFrame):
             path = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False).name
             self._preview_temp_file = path
             urllib.request.urlretrieve(thumb_url, path)
-            img = ctk.CTkImage(light_image=path, dark_image=path, size=(160, 90))
+            img = ctk.CTkImage(light_image=path, dark_image=path, size=(140, 79))
             self._preview_image = img
             self.preview_thumb_label.configure(image=img, text="")
         except Exception:
@@ -550,6 +762,119 @@ class MainWindow(ctk.CTkFrame):
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
+
+    @staticmethod
+    def _parse_track_percent_payload(payload):
+        if len(payload) >= 5:
+            return payload[0], payload[1], payload[2], payload[3], payload[4]
+        idx, pct, speed = payload[0], payload[1], payload[2]
+        return idx, pct, speed, None, None
+
+    def _truncate_title(self, title: str, max_len: int = 64) -> str:
+        t = (title or "").strip() or "Untitled"
+        if len(t) <= max_len:
+            return t
+        return t[: max_len - 1] + "…"
+
+    def _meta_detail_str(self) -> str:
+        if self.format_var.get() == FORMAT_MP4:
+            return f"Video · {self.quality_var.get()}"
+        return f"Audio · {self.audio_fmt_var.get()}"
+
+    def _clear_download_rows(self) -> None:
+        self._track_rows.clear()
+        for w in self._rows_container.winfo_children():
+            w.destroy()
+
+    def _create_track_row(self, track: TrackInfo) -> _TrackRowUI:
+        card = ctk.CTkFrame(
+            self._rows_container,
+            fg_color=("gray92", "gray18"),
+            corner_radius=8,
+        )
+        card.pack(fill="x", pady=(0, 8))
+        title = self._truncate_title(track.title)
+        tl = ctk.CTkLabel(
+            card,
+            text=f"{track.index}. {title}",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
+        )
+        tl.pack(fill="x", padx=10, pady=(8, 2))
+        out_base = os.path.basename(self.out_var.get().strip() or "downloads")
+        ml = ctk.CTkLabel(
+            card,
+            text=f"{self._meta_detail_str()}  ·  folder: {out_base}",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray35", "#AAB0B8"),
+            anchor="w",
+        )
+        ml.pack(fill="x", padx=10, pady=(0, 2))
+        sl = ctk.CTkLabel(
+            card, text="Queued", font=ctk.CTkFont(size=12), anchor="w",
+        )
+        sl.pack(fill="x", padx=10, pady=(2, 2))
+        bl = ctk.CTkLabel(
+            card, text="", font=ctk.CTkFont(size=11),
+            text_color=("gray40", "#8B98A8"),
+            anchor="w",
+        )
+        bl.pack(fill="x", padx=10, pady=(0, 4))
+        bar = ctk.CTkProgressBar(card, height=8)
+        bar.pack(fill="x", padx=10, pady=(0, 10))
+        bar.set(0)
+        return _TrackRowUI(card, tl, ml, sl, bl, bar)
+
+    def _rebuild_track_rows_from_playlist(self) -> None:
+        r = self._playlist_result
+        if not r or not r.tracks:
+            return
+        self._clear_download_rows()
+        for t in r.tracks:
+            self._track_rows[t.index] = self._create_track_row(t)
+            row = self._track_rows[t.index]
+            if t.status == "done":
+                row.set_done()
+            elif t.status == "failed":
+                row.set_failed(t.error or "")
+            elif t.status == "downloading":
+                row.set_downloading()
+            else:
+                row.set_queued()
+
+    def _populate_summary_visual(self) -> None:
+        for w in self._summary_rows_inner.winfo_children():
+            w.destroy()
+        r = self._playlist_result
+        if not r or not r.tracks:
+            return
+        for t in r.tracks:
+            fr = ctk.CTkFrame(
+                self._summary_rows_inner,
+                fg_color=("gray92", "gray18"),
+                corner_radius=6,
+            )
+            fr.pack(fill="x", pady=(0, 6))
+            if t.status == "done":
+                st = "Done"
+            elif t.status == "failed":
+                st = "Failed"
+            else:
+                st = t.status or "—"
+            ctk.CTkLabel(
+                fr,
+                text=f"{t.index}. {self._truncate_title(t.title, 56)} — {st}",
+                font=ctk.CTkFont(size=12),
+                anchor="w",
+            ).pack(fill="x", padx=8, pady=6)
+            if t.status == "failed" and t.error:
+                ctk.CTkLabel(
+                    fr,
+                    text=(t.error[:120] + "…") if len(t.error) > 120 else t.error,
+                    font=ctk.CTkFont(size=11),
+                    text_color="#ef4444",
+                    anchor="w",
+                ).pack(fill="x", padx=8, pady=(0, 6))
 
     def _update_stats(self):
         r = self._playlist_result
@@ -620,7 +945,6 @@ class MainWindow(ctk.CTkFrame):
         self.stats_var.set("")
         self.speed_var.set("")
         self.overall_progress.set(0)
-        self.track_progress.set(0)
         self._playlist_result = None
         self._set_running(True)
         self.tabview.set("Progress")
@@ -663,7 +987,6 @@ class MainWindow(ctk.CTkFrame):
         self.stats_var.set("")
         self.speed_var.set("")
         self.overall_progress.set(0)
-        self.track_progress.set(0)
         self._playlist_result = None
         self._set_running(True)
         self.tabview.set("Progress")
@@ -699,10 +1022,10 @@ class MainWindow(ctk.CTkFrame):
                 "There are no failed tracks to retry.")
             return
         self._clear_log()
+        self._rebuild_track_rows_from_playlist()
         self._set_running(True)
         self.tabview.set("Progress")
         self.speed_var.set("")
-        self.track_progress.set(0)
 
         self._cancel_event = threading.Event()
 
@@ -739,6 +1062,9 @@ class MainWindow(ctk.CTkFrame):
     def _handle_message(self, msg_type, payload):
         if msg_type == MSG_PLAYLIST_INFO:
             self._playlist_result = payload
+            self._clear_download_rows()
+            for t in payload.tracks:
+                self._track_rows[t.index] = self._create_track_row(t)
             self._update_stats()
 
         elif msg_type == MSG_TRACK_START:
@@ -746,22 +1072,37 @@ class MainWindow(ctk.CTkFrame):
             r = self._playlist_result
             total = r.total if r else "?"
             self._log(f"[{track.index}/{total}] Downloading: {track.title}")
-            self.track_progress.set(0)
+            row = self._track_rows.get(track.index)
+            if row:
+                row.set_downloading()
             self._update_stats()
 
         elif msg_type == MSG_TRACK_PROGRESS:
             self._log(payload)
 
         elif msg_type == MSG_TRACK_PERCENT:
-            _idx, pct_float, speed_str = payload
-            self.track_progress.set(pct_float)
+            idx, pct_float, speed_str, down_b, total_b = self._parse_track_percent_payload(
+                payload)
+            row = self._track_rows.get(idx)
+            if row:
+                row.update_progress(
+                    pct_float, speed_str or "", down_b, total_b,
+                )
             if speed_str:
                 self.speed_var.set(f"Speed: {speed_str}")
+
+        elif msg_type == MSG_TRACK_PHASE:
+            idx, phase = payload
+            row = self._track_rows.get(idx)
+            if row:
+                row.set_phase(phase)
 
         elif msg_type == MSG_TRACK_DONE:
             track: TrackInfo = payload
             self._log(f"[OK] {track.title}")
-            self.track_progress.set(1.0)
+            row = self._track_rows.get(track.index)
+            if row:
+                row.set_done()
             self._update_stats()
             try:
                 fmt_detail = self.quality_var.get() if self.format_var.get() == FORMAT_MP4 else self.audio_fmt_var.get()
@@ -779,7 +1120,9 @@ class MainWindow(ctk.CTkFrame):
         elif msg_type == MSG_TRACK_FAILED:
             track: TrackInfo = payload
             self._log(f"[FAILED] {track.title} - {track.error}")
-            self.track_progress.set(0)
+            row = self._track_rows.get(track.index)
+            if row:
+                row.set_failed(track.error or "")
             self._update_stats()
 
         elif msg_type == MSG_LOG:
@@ -800,7 +1143,6 @@ class MainWindow(ctk.CTkFrame):
         self._build_summary()
         self._log("\n--- All done ---")
         self.speed_var.set("")
-        self.track_progress.set(0)
         self.tabview.set("Summary")
         self.open_folder_btn.configure(state="normal")
 
@@ -863,6 +1205,8 @@ class MainWindow(ctk.CTkFrame):
 
     # ------------------------------------------------------------------ summary
     def _clear_summary(self):
+        for w in self._summary_rows_inner.winfo_children():
+            w.destroy()
         self.summary_text.configure(state="normal")
         self.summary_text.delete("1.0", "end")
         self.summary_text.configure(state="disabled")
@@ -875,6 +1219,7 @@ class MainWindow(ctk.CTkFrame):
         if not r or not r.tracks:
             self.summary_text.insert("end", "No tracks were processed.\n")
             self.summary_text.configure(state="disabled")
+            self._populate_summary_visual()
             return
 
         self.summary_text.insert("end", f"Playlist: {r.playlist_title}\n\n")
@@ -906,15 +1251,48 @@ class MainWindow(ctk.CTkFrame):
                 "end", "All tracks downloaded successfully!\n")
 
         self.summary_text.configure(state="disabled")
+        self._populate_summary_visual()
+
+
+def _patch_ctk_root_drag_drop(root: ctk.CTk) -> bool:
+    """
+    Bind tkinterdnd2 methods onto CTk. Python 3.12+ Tk may use __getattr__
+    delegating to self.tk, which hides BaseWidget.drop_target_register / dnd_bind.
+    """
+    import types
+
+    import tkinter as tk
+    from tkinterdnd2 import TkinterDnD, DND_TEXT
+
+    try:
+        TkinterDnD._require(root)
+    except Exception:
+        return False
+
+    for _name in (
+        "_substitute_dnd",
+        "_dnd_bind",
+        "dnd_bind",
+        "drop_target_register",
+        "drop_target_unregister",
+    ):
+        _fn = tk.BaseWidget.__dict__.get(_name)
+        if callable(_fn):
+            setattr(root, _name, types.MethodType(_fn, root))
+
+    try:
+        root.drop_target_register(DND_TEXT)
+    except Exception:
+        return False
+    return True
 
 
 def run(writable_root: str = None):
+    root = ctk.CTk()
+    use_dnd = False
     try:
-        from tkinterdnd2 import TkinterDnD, DND_TEXT
-        root = TkinterDnD.Tk()
-        use_dnd = True
+        use_dnd = _patch_ctk_root_drag_drop(root)
     except Exception:
-        root = ctk.CTk()
         use_dnd = False
 
     ctk.set_appearance_mode("dark")
@@ -928,7 +1306,7 @@ def run(writable_root: str = None):
             ctk.ThemeManager.theme[widget_type]["text_color"] = _text
     root.title("YouTube Downloader")
     root.geometry("780x660")
-    root.minsize(680, 580)
+    root.minsize(920, 600)
     if getattr(sys, "frozen", False):
         base = sys._MEIPASS
     else:
@@ -944,7 +1322,6 @@ def run(writable_root: str = None):
     app.pack(fill="both", expand=True, padx=0, pady=0)
     if use_dnd:
         try:
-            root.drop_target_register(DND_TEXT)
             root.dnd_bind("<<Drop>>", lambda e: app._on_drop(e))
         except Exception:
             pass

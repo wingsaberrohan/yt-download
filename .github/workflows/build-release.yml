@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+# Quieter until actions default to Node 24 (GitHub deprecation of Node 20 on runners)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
