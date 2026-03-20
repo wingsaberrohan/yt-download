@@ -32,6 +32,7 @@ from .ytdlp_updater import (
 )
 from .presets import load_presets, save_presets, DEFAULT_PRESETS
 from .search import search_youtube
+from .scheduler import DownloadScheduler
 from . import history as history_module
 
 __all__ = [
@@ -67,5 +68,6 @@ __all__ = [
     "save_presets",
     "DEFAULT_PRESETS",
     "search_youtube",
+    "DownloadScheduler",
     "history_module",
 ]
