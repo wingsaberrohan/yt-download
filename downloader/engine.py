@@ -577,6 +577,7 @@ def retry_failed(
     sub_langs: Optional[List[str]] = None,
     remove_sponsors: bool = False,
     cookiefile: Optional[str] = None,
+    outtmpl_template: str = None,
 ) -> tuple:
     """Retry only the failed tracks. Returns (message_queue, cancel_event)."""
     message_queue = Queue()
@@ -603,6 +604,7 @@ def retry_failed(
             write_subs=write_subs, sub_langs=sub_langs,
             remove_sponsors=remove_sponsors,
             cookiefile=cookiefile,
+            outtmpl_template=outtmpl_template,
         )
         message_queue.put((MSG_FINISHED, playlist_result))
 

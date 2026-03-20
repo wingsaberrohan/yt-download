@@ -424,12 +424,15 @@ class MainWindow(ctk.CTkFrame):
                 self._track_rows[i] = row
 
         elif msg_type == MSG_TRACK_START:
-            idx = data
+            track = data  # TrackInfo object; index is 1-based
+            idx = track.index - 1
             if idx in self._track_rows:
                 self._track_rows[idx].set_downloading()
 
         elif msg_type == MSG_TRACK_PERCENT:
-            idx, pct, speed_str, downloaded, total = data
+            # data is (track.index [1-based], pct, speed_str, downloaded, total)
+            raw_idx, pct, speed_str, downloaded, total = data
+            idx = raw_idx - 1
             if idx in self._track_rows:
                 self._track_rows[idx].update_progress(pct, speed_str, downloaded, total)
             if speed_str:
@@ -440,23 +443,30 @@ class MainWindow(ctk.CTkFrame):
             pass
 
         elif msg_type == MSG_TRACK_PHASE:
-            idx, phase = data
+            # data is (track.index [1-based], phase_str)
+            raw_idx, phase = data
+            idx = raw_idx - 1
             if idx in self._track_rows:
                 self._track_rows[idx].set_phase(phase)
 
         elif msg_type == MSG_TRACK_DONE:
-            if isinstance(data, tuple):
-                idx, file_path = data[0], data[1] if len(data) > 1 else None
-            else:
-                idx, file_path = data, None
+            track = data  # TrackInfo object; index is 1-based
+            idx = track.index - 1
+            file_path = getattr(track, 'output_path', None) or getattr(track, 'file_path', None)
             if idx in self._track_rows:
                 self._track_rows[idx].set_done(file_path=file_path)
+            # Only update QueueView state if no active TrackRows (avoids _render destroying them)
+            if not self._track_rows:
                 self._queue_view.update_item_state(idx, "done")
 
         elif msg_type == MSG_TRACK_FAILED:
-            idx, err = data
+            track = data  # TrackInfo object; index is 1-based
+            idx = track.index - 1
+            err = getattr(track, 'error', '') or ''
             if idx in self._track_rows:
                 self._track_rows[idx].set_failed(err)
+            # Only update QueueView state if no active TrackRows (avoids _render destroying them)
+            if not self._track_rows:
                 self._queue_view.update_item_state(idx, "failed", err)
 
         elif msg_type == MSG_FINISHED:
@@ -521,6 +531,7 @@ class MainWindow(ctk.CTkFrame):
                 quality_name=quality_name,
                 audio_format_name=audio_format_name,
                 output_dir=self._cfg["output_dir"],
+                outtmpl_template=self._cfg.get("outtmpl") or None,
             )
             self._poll_queue()
 
