@@ -12,6 +12,24 @@ from typing import List, Optional
 
 import yt_dlp
 
+_OUTTMPL_TOKEN_MAP = {
+    "{title}":          "%(title)s",
+    "{artist}":         "%(artist)s",
+    "{uploader}":       "%(uploader)s",
+    "{date}":           "%(upload_date)s",
+    "{playlist_index}": "%(playlist_index)s",
+}
+
+def _translate_outtmpl(template: str, quality_label: str) -> str:
+    """Translate spec token syntax ({title}) to yt-dlp syntax (%(title)s)."""
+    result = template
+    for spec_token, ytdlp_token in _OUTTMPL_TOKEN_MAP.items():
+        result = result.replace(spec_token, ytdlp_token)
+    result = result.replace("{quality}", quality_label or "")
+    result = result.replace("{ext}", "%(ext)s")
+    return result
+
+
 MP4_QUALITIES = [
     ("Best available", "bestvideo+bestaudio/best"),
     ("4K (2160p)", "bestvideo[height<=2160]+bestaudio/best[height<=2160]"),
@@ -136,8 +154,14 @@ def _build_ydl_opts(
     sub_langs: Optional[List[str]] = None,
     remove_sponsors: bool = False,
     cookiefile: Optional[str] = None,
+    outtmpl_template: str = None,
 ) -> dict:
-    out_tmpl = output_dir.replace("\\", "/").rstrip("/") + "/%(title)s.%(ext)s"
+    quality_label = audio_format_name or quality_name or ""
+    if outtmpl_template:
+        translated = _translate_outtmpl(outtmpl_template, quality_label)
+        out_tmpl = os.path.join(output_dir, translated)
+    else:
+        out_tmpl = output_dir.replace("\\", "/").rstrip("/") + "/%(title)s.%(ext)s"
 
     if format_type == FORMAT_AUDIO:
         codec, quality = get_audio_format(audio_format_name)
@@ -305,6 +329,7 @@ def _download_single_track(
     sub_langs: Optional[List[str]] = None,
     remove_sponsors: bool = False,
     cookiefile: Optional[str] = None,
+    outtmpl_template: str = None,
 ):
     """Download one track. Called from the thread pool."""
     if cancel_event and cancel_event.is_set():
@@ -379,6 +404,7 @@ def _download_single_track(
         sub_langs=sub_langs,
         remove_sponsors=remove_sponsors,
         cookiefile=cookiefile,
+        outtmpl_template=outtmpl_template,
     )
     base_opts["noplaylist"] = True
     pph = list(base_opts.get("postprocessor_hooks") or [])
@@ -428,6 +454,7 @@ def download_tracks(
     sub_langs: Optional[List[str]] = None,
     remove_sponsors: bool = False,
     cookiefile: Optional[str] = None,
+    outtmpl_template: str = None,
 ):
     """Download tracks in parallel using a thread pool."""
     workers = max(1, min(max_workers, MAX_WORKERS))
@@ -448,6 +475,7 @@ def download_tracks(
                 sub_langs=sub_langs,
                 remove_sponsors=remove_sponsors,
                 cookiefile=cookiefile,
+                outtmpl_template=outtmpl_template,
             )
         return
 
@@ -465,6 +493,7 @@ def download_tracks(
                 sub_langs=sub_langs,
                 remove_sponsors=remove_sponsors,
                 cookiefile=cookiefile,
+                outtmpl_template=outtmpl_template,
             ): track
             for track in tracks
         }
@@ -484,6 +513,7 @@ def start_download(
     sub_langs: Optional[List[str]] = None,
     remove_sponsors: bool = False,
     cookiefile: Optional[str] = None,
+    outtmpl_template: str = None,
 ) -> tuple:
     """
     High-level download entry point. Returns (message_queue, cancel_event).
@@ -526,6 +556,7 @@ def start_download(
             write_subs=write_subs, sub_langs=sub_langs,
             remove_sponsors=remove_sponsors,
             cookiefile=cookiefile,
+            outtmpl_template=outtmpl_template,
         )
         message_queue.put((MSG_FINISHED, result))
 
