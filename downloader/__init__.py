@@ -30,6 +30,7 @@ from .ytdlp_updater import (
     get_latest_version,
     update_ytdlp,
 )
+from .presets import load_presets, save_presets, DEFAULT_PRESETS
 from . import history as history_module
 
 __all__ = [
@@ -61,5 +62,8 @@ __all__ = [
     "get_current_version",
     "get_latest_version",
     "update_ytdlp",
+    "load_presets",
+    "save_presets",
+    "DEFAULT_PRESETS",
     "history_module",
 ]
