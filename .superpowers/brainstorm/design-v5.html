@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Downloader v5.0 — UI Design Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #090a0e;
+    color: #f0f0f5;
+    font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 32px 16px 48px;
+  }
+
+  .layout-wrapper {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  /* ── Page labels ── */
+  .page-label {
+    font-size: 11px;
+    color: #8b8fa8;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-left: 2px;
+  }
+  .col { display: flex; flex-direction: column; flex-shrink: 0; }
+
+  /* ══════════════════════════════════════════
+     APP WINDOW MOCKUP
+  ══════════════════════════════════════════ */
+  .app-window {
+    width: 860px;
+    background: #0e0f14;
+    border: 1px solid #252730;
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 80px #00000088;
+  }
+
+  /* ── Title bar ── */
+  .title-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px 8px;
+    background: #0e0f14;
+    border-bottom: 1px solid #1a1b22;
+  }
+  .app-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: #f0f0f5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .app-title-icon { font-size: 18px; }
+  .gear-btn {
+    width: 34px; height: 34px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #8b8fa8;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, border-color .15s, color .15s;
+    position: relative;
+  }
+  .gear-btn:hover { background: #1c1e28; border-color: #252730; color: #f0f0f5; }
+  .gear-badge {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 7px; height: 7px;
+    background: #7c6af7;
+    border-radius: 50%;
+    border: 1.5px solid #0e0f14;
+  }
+
+  /* ── Command bar ── */
+  .cmd-area {
+    padding: 10px 16px 0;
+  }
+  .cmd-pill {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 22px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px 0 16px;
+    gap: 8px;
+    transition: border-color .15s;
+  }
+  .cmd-pill:focus-within { border-color: #7c6af7; }
+  .cmd-icon { color: #8b8fa8; font-size: 14px; flex-shrink: 0; }
+  .cmd-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #f0f0f5;
+    font-size: 14px;
+    font-family: inherit;
+    height: 44px;
+  }
+  .cmd-input::placeholder { color: #8b8fa8; }
+  .cmd-paste {
+    background: transparent;
+    border: none;
+    color: #8b8fa8;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 0 6px;
+    transition: color .15s;
+  }
+  .cmd-paste:hover { color: #f0f0f5; }
+  .cmd-dl {
+    background: #7c6af7;
+    color: #fff;
+    border: none;
+    border-radius: 14px;
+    padding: 7px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background .15s;
+    flex-shrink: 0;
+  }
+  .cmd-dl:hover { background: #6355d4; }
+  .cmd-badge {
+    font-size: 11px;
+    color: #8b8fa8;
+    padding: 3px 16px 0;
+    height: 18px;
+  }
+
+  /* ── Options row ── */
+  .options-area {
+    padding: 8px 16px 0;
+  }
+  .options-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* Segmented button */
+  .seg-btn {
+    display: flex;
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .seg-btn button {
+    background: transparent;
+    border: none;
+    color: #8b8fa8;
+    font-size: 12px;
+    font-family: inherit;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+  }
+  .seg-btn button.active {
+    background: #7c6af7;
+    color: #fff;
+    font-weight: 600;
+  }
+  .seg-btn button:not(.active):hover { background: #1c1e28; color: #f0f0f5; }
+
+  /* Dropdown */
+  .opt-drop {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 6px 10px 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #f0f0f5;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    transition: border-color .15s;
+    user-select: none;
+  }
+  .opt-drop:hover { border-color: #7c6af7; }
+  .opt-drop::after { content: '▾'; color: #8b8fa8; font-size: 10px; }
+
+  /* Toggle pill */
+  .opt-toggle {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #8b8fa8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    transition: border-color .15s, color .15s;
+    user-select: none;
+    border: 1px solid #252730;
+  }
+  .opt-toggle:hover { border-color: #7c6af7; }
+  .opt-toggle .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #252730;
+    transition: background .2s;
+    flex-shrink: 0;
+  }
+  .opt-toggle.on { color: #f0f0f5; border-color: #4ade8044; }
+  .opt-toggle.on .dot { background: #4ade80; box-shadow: 0 0 6px #4ade8066; }
+
+  /* Save preset button */
+  .save-preset-btn {
+    background: transparent;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #8b8fa8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    transition: border-color .15s, color .15s;
+  }
+  .save-preset-btn:hover { border-color: #7c6af7; color: #a78bfa; }
+
+  /* Advanced toggle */
+  .adv-toggle-btn {
+    background: transparent;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #8b8fa8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    transition: border-color .15s, color .15s, background .15s;
+    margin-left: auto;
+  }
+  .adv-toggle-btn:hover { border-color: #7c6af7; color: #f0f0f5; }
+  .adv-toggle-btn.open { border-color: #7c6af7; color: #a78bfa; background: #7c6af711; }
+  .adv-arrow { transition: transform .2s; display: inline-block; font-size: 10px; }
+  .adv-toggle-btn.open .adv-arrow { transform: rotate(180deg); }
+
+  /* ── Advanced panel ── */
+  .adv-panel {
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height .25s cubic-bezier(0.4,0,0.2,1), opacity .2s;
+    opacity: 0;
+  }
+  .adv-panel.open {
+    max-height: 200px;
+    opacity: 1;
+  }
+  .adv-inner {
+    margin: 8px 16px 0;
+    background: #13151c;
+    border: 1px solid #252730;
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 20px;
+  }
+  .adv-field { display: flex; flex-direction: column; gap: 4px; }
+  .adv-label { font-size: 11px; color: #8b8fa8; }
+  .adv-input-row { display: flex; gap: 5px; }
+  .adv-input {
+    flex: 1;
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 7px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #f0f0f5;
+    outline: none;
+    transition: border-color .15s;
+    min-width: 0;
+  }
+  .adv-input:focus { border-color: #7c6af7; }
+  .adv-browse {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 7px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #8b8fa8;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color .15s, color .15s;
+  }
+  .adv-browse:hover { border-color: #7c6af7; color: #f0f0f5; }
+  .adv-preview { font-size: 10px; color: #8b8fa8; padding-left: 2px; }
+  .adv-slider-row { display: flex; align-items: center; gap: 8px; }
+  .adv-slider {
+    flex: 1;
+    accent-color: #7c6af7;
+    height: 4px;
+    cursor: pointer;
+  }
+  .adv-slider-val { font-size: 11px; color: #a78bfa; flex-shrink: 0; min-width: 56px; }
+
+  /* ── Content area ── */
+  .content-area {
+    flex: 1;
+    margin: 10px 16px 0;
+    background: #13151c;
+    border: 1px solid #252730;
+    border-radius: 10px;
+    overflow: hidden;
+    min-height: 260px;
+  }
+
+  /* Track rows */
+  .track-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #1a1b22;
+    position: relative;
+    cursor: pointer;
+    transition: background .12s;
+  }
+  .track-row:hover { background: #16171d; }
+  .track-stripe {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+  }
+  .stripe-downloading { background: #7c6af7; }
+  .stripe-done { background: #4ade80; }
+  .stripe-pending { background: #8b8fa8; }
+  .track-thumb {
+    width: 44px; height: 44px;
+    background: #1c1e28;
+    border-radius: 6px;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  .track-info { flex: 1; min-width: 0; }
+  .track-title {
+    font-size: 13px;
+    color: #f0f0f5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+  }
+  .track-meta { font-size: 11px; color: #8b8fa8; margin-bottom: 5px; }
+  .track-prog-wrap { display: flex; align-items: center; gap: 8px; }
+  .track-prog {
+    flex: 1;
+    height: 4px;
+    background: #252730;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .track-prog-fill {
+    height: 100%;
+    background: #7c6af7;
+    border-radius: 4px;
+    transition: width .3s;
+  }
+  .track-pct { font-size: 11px; color: #a78bfa; flex-shrink: 0; min-width: 32px; text-align: right; }
+  .track-speed { font-size: 11px; color: #8b8fa8; flex-shrink: 0; }
+  .track-status-done { font-size: 12px; color: #4ade80; flex-shrink: 0; }
+  .track-actions {
+    display: flex; gap: 4px;
+    flex-shrink: 0;
+  }
+  .track-act-btn {
+    background: transparent;
+    border: 1px solid #252730;
+    border-radius: 6px;
+    color: #8b8fa8;
+    font-size: 11px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color .15s, color .15s;
+  }
+  .track-act-btn:hover { border-color: #7c6af7; color: #a78bfa; }
+
+  .queue-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 180px;
+    color: #8b8fa8;
+    gap: 8px;
+  }
+  .queue-empty-icon { font-size: 32px; opacity: .4; }
+  .queue-empty-text { font-size: 13px; }
+  .queue-empty-sub { font-size: 11px; opacity: .6; }
+
+  /* ── Bottom nav ── */
+  .bottom-nav {
+    display: flex;
+    background: #13151c;
+    border-top: 1px solid #252730;
+    margin-top: 10px;
+  }
+  .nav-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-top: 3px solid transparent;
+    color: #8b8fa8;
+    font-size: 13px;
+    font-family: inherit;
+    padding: 10px 8px 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: color .15s, border-color .15s, background .15s;
+    position: relative;
+  }
+  .nav-btn:hover { color: #f0f0f5; background: #1c1e2840; }
+  .nav-btn.active {
+    color: #a78bfa;
+    border-top-color: #7c6af7;
+    background: #7c6af711;
+  }
+  .nav-badge {
+    background: #7c6af7;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 99px;
+    line-height: 1.4;
+  }
+  .nav-speed {
+    margin-left: auto;
+    font-size: 11px;
+    color: #8b8fa8;
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* ── Right: annotations ── */
+  .annotations {
+    width: 230px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-self: stretch;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .ann {
+    background: #13151c;
+    border: 1px solid #252730;
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .ann-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #a78bfa;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ann-body { font-size: 11px; color: #8b8fa8; line-height: 1.6; }
+  .ann-body b { color: #f0f0f5; }
+
+  /* Responsive note */
+  .resp-note {
+    background: #13151c;
+    border: 1px solid #4ade8033;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 11px;
+    color: #8b8fa8;
+    margin-top: 4px;
+  }
+  .resp-note strong { color: #4ade80; }
+</style>
+</head>
+<body>
+
+<div class="layout-wrapper">
+<div class="col">
+  <div class="page-label">YT Downloader v5.0 — Interactive UI Mockup</div>
+
+  <div class="app-window">
+
+    <!-- ── Title bar ── -->
+    <div class="title-bar">
+      <div class="app-title">
+        <span class="app-title-icon">▶</span>
+        YT Downloader
+      </div>
+      <button class="gear-btn" title="Settings (Telegram + yt-dlp update)">
+        ⚙
+        <span class="gear-badge"></span>
+      </button>
+    </div>
+
+    <!-- ── Command bar ── -->
+    <div class="cmd-area">
+      <div class="cmd-pill">
+        <span class="cmd-icon">🔍</span>
+        <input class="cmd-input" placeholder="Paste URL or search YouTube…" id="urlInput"
+               oninput="detectUrl(this.value)">
+        <button class="cmd-paste" onclick="pasteDemo()">Paste</button>
+        <button class="cmd-dl" onclick="addDemo()">Download</button>
+      </div>
+      <div class="cmd-badge" id="urlBadge"></div>
+    </div>
+
+    <!-- ── Options row ── -->
+    <div class="options-area">
+      <div class="options-row">
+
+        <!-- Format segmented -->
+        <div class="seg-btn" role="group" aria-label="Format">
+          <button class="active" id="fmt-audio" onclick="setFormat('audio')" tabindex="1">🎵 Audio</button>
+          <button id="fmt-video" onclick="setFormat('video')" tabindex="2">📼 Video</button>
+        </div>
+
+        <!-- Quality dropdown -->
+        <div class="opt-drop" id="qualityDrop" onclick="cycleQuality()" tabindex="3" role="button" aria-label="Quality">
+          <span id="qualityLabel">320 kbps</span>
+        </div>
+
+        <!-- SponsorBlock toggle -->
+        <div class="opt-toggle on" id="sponsorToggle" onclick="toggle(this,'SponsorBlock')" tabindex="4" role="checkbox" aria-checked="true">
+          <span class="dot"></span>
+          SponsorBlock
+        </div>
+
+        <!-- Subtitles toggle -->
+        <div class="opt-toggle" id="subsToggle" onclick="toggle(this,'Subtitles')" tabindex="5" role="checkbox" aria-checked="false">
+          <span class="dot"></span>
+          Subtitles
+        </div>
+
+        <!-- Save preset -->
+        <button class="save-preset-btn" onclick="showSavePreset()" tabindex="6">
+          ☆ Save as Preset
+        </button>
+
+        <!-- Advanced toggle — pushed to right via margin-left:auto -->
+        <button class="adv-toggle-btn" id="advBtn" onclick="toggleAdv()" tabindex="7">
+          ⚙ Advanced <span class="adv-arrow">▾</span>
+        </button>
+
+      </div>
+    </div>
+
+    <!-- ── Advanced inline panel ── -->
+    <div class="adv-panel" id="advPanel">
+      <div class="adv-inner">
+
+        <div class="adv-field">
+          <span class="adv-label">Output Folder</span>
+          <div class="adv-input-row">
+            <input class="adv-input" value="C:\Users\Rohan\Downloads" tabindex="8">
+            <button class="adv-browse" tabindex="9">…</button>
+          </div>
+        </div>
+
+        <div class="adv-field">
+          <span class="adv-label">Parallel Downloads</span>
+          <div class="adv-slider-row">
+            <input type="range" class="adv-slider" min="1" max="8" value="3"
+                   oninput="document.getElementById('workerVal').textContent=this.value+' workers'"
+                   tabindex="10">
+            <span class="adv-slider-val" id="workerVal">3 workers</span>
+          </div>
+        </div>
+
+        <div class="adv-field">
+          <span class="adv-label">Filename Template</span>
+          <input class="adv-input" value="{title}.{ext}"
+                 oninput="updatePreview(this.value)" tabindex="11">
+          <span class="adv-preview" id="tmplPreview">Preview: Song Title.mp3</span>
+        </div>
+
+        <div class="adv-field">
+          <span class="adv-label">Cookies File</span>
+          <div class="adv-input-row">
+            <input class="adv-input" placeholder="(none — for age-restricted)" tabindex="12">
+            <button class="adv-browse" tabindex="13">…</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Content area ── -->
+    <div class="content-area" id="contentArea">
+
+      <!-- Track downloading -->
+      <div class="track-row" tabindex="20">
+        <div class="track-stripe stripe-downloading"></div>
+        <div class="track-thumb">🎵</div>
+        <div class="track-info">
+          <div class="track-title">Never Gonna Give You Up — Rick Astley</div>
+          <div class="track-meta">YouTube · MP3 320kbps</div>
+          <div class="track-prog-wrap">
+            <div class="track-prog"><div class="track-prog-fill" style="width:62%"></div></div>
+            <span class="track-pct">62%</span>
+            <span class="track-speed">2.1 MB/s</span>
+          </div>
+        </div>
+        <div class="track-actions">
+          <button class="track-act-btn" tabindex="21">✕</button>
+        </div>
+      </div>
+
+      <!-- Track done -->
+      <div class="track-row" tabindex="22">
+        <div class="track-stripe stripe-done"></div>
+        <div class="track-thumb">🎵</div>
+        <div class="track-info">
+          <div class="track-title">Blinding Lights — The Weeknd</div>
+          <div class="track-meta">YouTube · MP3 320kbps · 8.4 MB</div>
+        </div>
+        <div class="track-actions">
+          <span class="track-status-done">✓ Done</span>
+          <button class="track-act-btn" tabindex="23">▶ Play</button>
+          <button class="track-act-btn" tabindex="24">📁</button>
+        </div>
+      </div>
+
+      <!-- Track pending -->
+      <div class="track-row" tabindex="25">
+        <div class="track-stripe stripe-pending"></div>
+        <div class="track-thumb">📼</div>
+        <div class="track-info">
+          <div class="track-title">Tokyo Drift (Fast & Furious) — Teriyaki Boyz</div>
+          <div class="track-meta">YouTube · MP4 1080p · Pending</div>
+        </div>
+        <div class="track-actions">
+          <button class="track-act-btn" tabindex="26">✕</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Bottom nav ── -->
+    <div class="bottom-nav">
+      <button class="nav-btn active" tabindex="30">
+        ≡ Queue
+        <span class="nav-badge">2</span>
+      </button>
+      <button class="nav-btn" tabindex="31">
+        📁 History
+      </button>
+      <button class="nav-btn" tabindex="32">
+        ▶ Player
+      </button>
+      <div class="nav-speed">⚡ 2.1 MB/s</div>
+    </div>
+
+  </div><!-- end app-window -->
+
+  <div class="resp-note" style="width:860px;margin-top:8px;">
+    <strong>Responsive:</strong> Works at 1280×820 — options row wraps to 2 lines, advanced panel is scrollable, all controls keyboard-navigable with proper tab order (1→32).
+  </div>
+</div>
+
+<!-- ── Annotations sidebar ── -->
+<div class="annotations">
+
+  <div class="ann">
+    <div class="ann-title">🎛 Options Row</div>
+    <div class="ann-body">
+      <b>Always visible</b> — no clicking into settings.<br><br>
+      Format toggle switches quality options automatically:<br>
+      Audio → 128 / 192 / <b>320 kbps</b> / FLAC<br>
+      Video → 720p / <b>1080p</b> / 4K
+    </div>
+  </div>
+
+  <div class="ann">
+    <div class="ann-title">⚙ Advanced ▾ (click to expand)</div>
+    <div class="ann-body">
+      Slides open <b>inline</b> — pushes queue content down.<br><br>
+      Contains: Output folder, Workers, Filename template, Cookies.<br><br>
+      Changes save <b>instantly</b> — no Apply button needed.
+    </div>
+  </div>
+
+  <div class="ann">
+    <div class="ann-title">☆ Save as Preset</div>
+    <div class="ann-body">
+      Captures current format + quality into a named preset.<br><br>
+      Replaces the old preset pills row — <b>cleaner top section</b>.
+    </div>
+  </div>
+
+  <div class="ann">
+    <div class="ann-title">≡ Queue badge</div>
+    <div class="ann-body">
+      Shows <b>active download count</b> at a glance.<br>Active tab has <b>violet top underline</b> so it's unmissable.
+    </div>
+  </div>
+
+  <div class="ann">
+    <div class="ann-title">⚙ Gear (top-right)</div>
+    <div class="ann-body">
+      <b>Violet dot</b> = yt-dlp update available.<br>
+      Contains only: Telegram token/channel.<br>
+      Everything else moved to Advanced inline.
+    </div>
+  </div>
+
+</div>
+</div><!-- end layout-wrapper -->
+
+<script>
+  const audioQualities = ['128 kbps', '192 kbps', '320 kbps', 'FLAC'];
+  const videoQualities = ['720p', '1080p', '4K'];
+  let currentFormat = 'audio';
+  let audioQIdx = 2; // 320 kbps
+  let videoQIdx = 1; // 1080p
+
+  function setFormat(fmt) {
+    currentFormat = fmt;
+    document.getElementById('fmt-audio').classList.toggle('active', fmt === 'audio');
+    document.getElementById('fmt-video').classList.toggle('active', fmt === 'video');
+    updateQuality();
+  }
+
+  function updateQuality() {
+    const list = currentFormat === 'audio' ? audioQualities : videoQualities;
+    const idx = currentFormat === 'audio' ? audioQIdx : videoQIdx;
+    document.getElementById('qualityLabel').textContent = list[idx];
+  }
+
+  function cycleQuality() {
+    if (currentFormat === 'audio') {
+      audioQIdx = (audioQIdx + 1) % audioQualities.length;
+    } else {
+      videoQIdx = (videoQIdx + 1) % videoQualities.length;
+    }
+    updateQuality();
+  }
+
+  function toggle(el, name) {
+    el.classList.toggle('on');
+    const on = el.classList.contains('on');
+    el.setAttribute('aria-checked', on);
+  }
+
+  function toggleAdv() {
+    const panel = document.getElementById('advPanel');
+    const btn = document.getElementById('advBtn');
+    const open = panel.classList.toggle('open');
+    btn.classList.toggle('open', open);
+  }
+
+  function detectUrl(val) {
+    const badge = document.getElementById('urlBadge');
+    if (val.startsWith('http://') || val.startsWith('https://')) {
+      const src = val.includes('youtube') || val.includes('youtu.be') ? 'YouTube'
+                : val.includes('soundcloud') ? 'SoundCloud'
+                : val.includes('spotify') ? 'Spotify'
+                : 'URL';
+      badge.textContent = '🌐 ' + src + ' detected';
+    } else if (val.length > 2) {
+      badge.textContent = '🔍 Searching YouTube…';
+    } else {
+      badge.textContent = '';
+    }
+  }
+
+  function pasteDemo() {
+    document.getElementById('urlInput').value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    detectUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  }
+
+  function addDemo() {
+    const badge = document.getElementById('urlBadge');
+    badge.textContent = '✓ Added to queue';
+    setTimeout(() => badge.textContent = '', 1800);
+  }
+
+  function showSavePreset() {
+    const name = prompt('Preset name:', 'My Preset');
+    if (name) alert('Preset "' + name + '" saved! ✓');
+  }
+
+  function updatePreview(tmpl) {
+    const preview = tmpl
+      .replace('{title}', 'Song Title')
+      .replace('{artist}', 'Artist')
+      .replace('{ext}', 'mp3')
+      .replace('{quality}', '320kbps')
+      .replace('{date}', '20260320')
+      .replace('{uploader}', 'Uploader')
+      .replace('{playlist_index}', '01');
+    document.getElementById('tmplPreview').textContent = 'Preview: ' + preview;
+  }
+</script>
+</body>
+</html>

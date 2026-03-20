@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Downloader — UI Layout Approaches</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0e0f14;
+    color: #f0f0f5;
+    font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+    padding: 32px 24px 64px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+  .page-sub { color: #8b8fa8; font-size: 14px; margin-bottom: 40px; }
+
+  .approaches { display: flex; gap: 28px; flex-wrap: wrap; }
+  .approach {
+    flex: 1 1 340px;
+    background: #13151c;
+    border: 2px solid #252730;
+    border-radius: 14px;
+    padding: 0 0 20px;
+    cursor: pointer;
+    transition: border-color .18s, transform .14s;
+    position: relative;
+    overflow: hidden;
+  }
+  .approach:hover { border-color: #7c6af7; transform: translateY(-2px); }
+  .approach.selected { border-color: #7c6af7; background: #16171d; }
+  .approach.selected::after {
+    content: '✓ Selected';
+    position: absolute;
+    top: 12px; right: 14px;
+    background: #7c6af7;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 99px;
+  }
+  .approach-label {
+    background: #1c1e28;
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid #252730;
+    margin-bottom: 16px;
+  }
+  .approach-title { font-size: 16px; font-weight: 600; margin-bottom: 3px; }
+  .approach-sub { font-size: 12px; color: #8b8fa8; }
+  .recommended-tag {
+    display: inline-block;
+    background: #4ade8022;
+    color: #4ade80;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  /* ── shared mock styles ── */
+  .mock { padding: 0 14px; }
+  .m-bar {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 22px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .m-bar-icon { color: #8b8fa8; font-size: 13px; }
+  .m-bar-text { flex: 1; font-size: 12px; color: #8b8fa8; }
+  .m-btn {
+    background: #7c6af7;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .m-section { margin-bottom: 8px; }
+  .m-label { font-size: 10px; color: #8b8fa8; letter-spacing: .5px; text-transform: uppercase; margin-bottom: 4px; padding-left: 2px; }
+  .m-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .m-seg {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    display: flex;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .m-seg span {
+    padding: 5px 12px;
+    font-size: 11px;
+    color: #8b8fa8;
+    cursor: pointer;
+  }
+  .m-seg span.active { background: #7c6af7; color: #fff; }
+  .m-drop {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: #f0f0f5;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .m-drop::after { content: '▾'; color: #8b8fa8; font-size: 10px; }
+  .m-toggle {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: #8b8fa8;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .m-toggle .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #252730;
+    flex-shrink: 0;
+  }
+  .m-toggle.on { color: #f0f0f5; }
+  .m-toggle.on .dot { background: #4ade80; }
+  .m-adv-btn {
+    font-size: 11px;
+    color: #8b8fa8;
+    background: transparent;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 5px 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .m-adv-panel {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 6px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .m-adv-row { font-size: 11px; color: #8b8fa8; display: flex; flex-direction: column; gap: 2px; }
+  .m-adv-input {
+    background: #13151c;
+    border: 1px solid #252730;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: #f0f0f5;
+  }
+  .m-content {
+    background: #13151c;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #8b8fa8;
+    text-align: center;
+  }
+  .m-divider { height: 1px; background: #252730; margin: 8px 0; }
+  .m-pills { display: flex; gap: 5px; flex-wrap: wrap; }
+  .m-pill {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 99px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: #8b8fa8;
+  }
+  .m-pill.active { background: #7c6af7; border-color: #7c6af7; color: #fff; }
+  .m-sidebar {
+    width: 200px;
+    background: #13151c;
+    border-right: 1px solid #252730;
+    padding: 12px;
+    flex-shrink: 0;
+  }
+  .m-side-section { margin-bottom: 12px; }
+  .m-side-label { font-size: 10px; color: #8b8fa8; letter-spacing: .5px; text-transform: uppercase; margin-bottom: 6px; }
+  .m-side-row { font-size: 11px; color: #f0f0f5; padding: 4px 6px; border-radius: 6px; margin-bottom: 2px; }
+  .m-side-row.active { background: #7c6af722; color: #a78bfa; }
+  .m-card {
+    background: #16171d;
+    border: 1px solid #252730;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .m-card-icon { font-size: 14px; }
+  .m-card-body { flex: 1; }
+  .m-card-title { color: #f0f0f5; margin-bottom: 2px; }
+  .m-card-sub { color: #8b8fa8; font-size: 10px; }
+  .m-prog { height: 3px; background: #252730; border-radius: 3px; margin-top: 4px; position: relative; }
+  .m-prog::after { content: ''; position: absolute; left:0; top:0; bottom:0; width: 60%; background: #7c6af7; border-radius: 3px; }
+
+  /* pros/cons */
+  .pros-cons { display: flex; gap: 12px; padding: 0 14px; margin-top: 12px; }
+  .pros, .cons { flex: 1; }
+  .pros-title { font-size: 11px; font-weight: 600; color: #4ade80; margin-bottom: 4px; }
+  .cons-title { font-size: 11px; font-weight: 600; color: #f87171; margin-bottom: 4px; }
+  ul.pc { list-style: none; font-size: 11px; color: #8b8fa8; display: flex; flex-direction: column; gap: 3px; }
+  ul.pc li::before { margin-right: 5px; }
+  .pros ul.pc li::before { content: '+'; color: #4ade80; }
+  .cons ul.pc li::before { content: '−'; color: #f87171; }
+
+  /* footer note */
+  .footer { margin-top: 48px; font-size: 12px; color: #8b8fa8; text-align: center; }
+  .footer strong { color: #f0f0f5; }
+</style>
+</head>
+<body>
+
+<h1>YT Downloader — UI Layout Approaches</h1>
+<p class="page-sub">Click an approach to select it. All 3 put major options on-screen with Advanced collapsible.</p>
+
+<div class="approaches">
+
+  <!-- ───────────────── A: Inline Options Bar ───────────────── -->
+  <div class="approach" onclick="select(this,'A')" id="opt-A">
+    <div class="approach-label">
+      <div class="approach-title">A — Inline Options Bar <span class="recommended-tag">★ RECOMMENDED</span></div>
+      <div class="approach-sub">Compact horizontal row of controls below the URL bar</div>
+    </div>
+    <div class="mock">
+      <!-- URL bar -->
+      <div class="m-bar">
+        <span class="m-bar-icon">🔍</span>
+        <span class="m-bar-text">Paste URL or search YouTube…</span>
+        <span class="m-btn">Download</span>
+      </div>
+
+      <!-- Options row -->
+      <div class="m-section">
+        <div class="m-label">Format &amp; Quality</div>
+        <div class="m-row">
+          <div class="m-seg">
+            <span class="active">🎵 Audio</span>
+            <span>📼 Video</span>
+          </div>
+          <div class="m-drop">320 kbps</div>
+          <div class="m-toggle on"><span class="dot"></span>SponsorBlock</div>
+          <div class="m-toggle"><span class="dot"></span>Subtitles</div>
+          <div class="m-adv-btn">⚙ Advanced ▾</div>
+        </div>
+      </div>
+
+      <!-- Advanced panel (collapsed by default, shown expanded here) -->
+      <div class="m-adv-panel">
+        <div class="m-adv-row">Output Folder<div class="m-adv-input">~/Downloads</div></div>
+        <div class="m-adv-row">Workers<div class="m-adv-input">3 parallel</div></div>
+        <div class="m-adv-row">Filename Template<div class="m-adv-input">{title}.{ext}</div></div>
+        <div class="m-adv-row">Cookies File<div class="m-adv-input">(none)</div></div>
+      </div>
+
+      <!-- Queue area -->
+      <div class="m-content" style="margin-top:8px;">
+        <div class="m-card">
+          <span class="m-card-icon">🎵</span>
+          <div class="m-card-body">
+            <div class="m-card-title">Never Gonna Give You Up</div>
+            <div class="m-card-sub">Rick Astley · MP3 320kbps</div>
+            <div class="m-prog"></div>
+          </div>
+        </div>
+        <div style="color:#8b8fa8;font-size:11px;padding:8px 0;">Queue &amp; History below…</div>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="pros"><div class="pros-title">Pros</div><ul class="pc">
+        <li>All key options visible immediately</li>
+        <li>Advanced stays hidden until needed</li>
+        <li>Works great at any window width</li>
+        <li>Least disruptive to current layout</li>
+      </ul></div>
+      <div class="cons"><div class="cons-title">Cons</div><ul class="pc">
+        <li>Row can wrap on small windows</li>
+        <li>No quick preset shortcuts visible</li>
+      </ul></div>
+    </div>
+  </div>
+
+  <!-- ───────────────── B: Left Sidebar ───────────────── -->
+  <div class="approach" onclick="select(this,'B')" id="opt-B">
+    <div class="approach-label">
+      <div class="approach-title">B — Left Sidebar Controls</div>
+      <div class="approach-sub">Permanent sidebar with all options, queue on the right</div>
+    </div>
+    <div class="mock">
+      <div style="display:flex;gap:0;background:#0e0f14;border-radius:8px;overflow:hidden;border:1px solid #252730;">
+        <!-- Sidebar -->
+        <div class="m-sidebar">
+          <div class="m-bar" style="margin-bottom:10px;">
+            <span class="m-bar-icon">🔍</span>
+            <span class="m-bar-text" style="font-size:10px;">Paste URL…</span>
+          </div>
+          <div class="m-side-section">
+            <div class="m-side-label">Format</div>
+            <div class="m-side-row active">🎵 Audio</div>
+            <div class="m-side-row">📼 Video</div>
+          </div>
+          <div class="m-side-section">
+            <div class="m-side-label">Quality</div>
+            <div class="m-side-row active">320 kbps</div>
+            <div class="m-side-row">192 kbps</div>
+            <div class="m-side-row">128 kbps</div>
+          </div>
+          <div class="m-side-section">
+            <div class="m-side-label">Options</div>
+            <div class="m-toggle on" style="margin-bottom:4px;padding:5px 6px;"><span class="dot"></span>SponsorBlock</div>
+            <div class="m-toggle" style="padding:5px 6px;"><span class="dot"></span>Subtitles</div>
+          </div>
+          <div class="m-side-section">
+            <div class="m-side-label">Advanced ▸</div>
+            <div style="font-size:10px;color:#8b8fa8;">Output, workers,<br>template, cookies…</div>
+          </div>
+        </div>
+        <!-- Main area -->
+        <div style="flex:1;padding:10px;">
+          <div class="m-card"><span class="m-card-icon">🎵</span><div class="m-card-body"><div class="m-card-title">Never Gonna Give You Up</div><div class="m-card-sub">60% · 2.1 MB/s</div><div class="m-prog"></div></div></div>
+          <div style="color:#8b8fa8;font-size:11px;padding:8px 4px;">Queue items…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="pros"><div class="pros-title">Pros</div><ul class="pc">
+        <li>All options always visible</li>
+        <li>Power-user friendly</li>
+        <li>No expand/collapse needed</li>
+      </ul></div>
+      <div class="cons"><div class="cons-title">Cons</div><ul class="pc">
+        <li>Eats 200px of horizontal space</li>
+        <li>Queue gets squished on small screens</li>
+        <li>Feels heavy for a simple downloader</li>
+      </ul></div>
+    </div>
+  </div>
+
+  <!-- ───────────────── C: Format Cards + Inline Row ───────────────── -->
+  <div class="approach" onclick="select(this,'C')" id="opt-C">
+    <div class="approach-label">
+      <div class="approach-title">C — Format Cards + Options Row</div>
+      <div class="approach-sub">Big visual format cards, then a compact options row</div>
+    </div>
+    <div class="mock">
+      <!-- URL bar -->
+      <div class="m-bar">
+        <span class="m-bar-icon">🔍</span>
+        <span class="m-bar-text">Paste URL or search…</span>
+        <span class="m-btn">Download</span>
+      </div>
+
+      <!-- Format cards -->
+      <div class="m-section">
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <div style="flex:1;background:#7c6af722;border:1.5px solid #7c6af7;border-radius:10px;padding:8px 10px;text-align:center;cursor:pointer;">
+            <div style="font-size:18px;margin-bottom:2px;">🎵</div>
+            <div style="font-size:12px;font-weight:600;color:#a78bfa;">MP3 Audio</div>
+            <div style="font-size:10px;color:#8b8fa8;">320 kbps</div>
+          </div>
+          <div style="flex:1;background:#16171d;border:1px solid #252730;border-radius:10px;padding:8px 10px;text-align:center;cursor:pointer;">
+            <div style="font-size:18px;margin-bottom:2px;">📼</div>
+            <div style="font-size:12px;font-weight:600;color:#f0f0f5;">MP4 Video</div>
+            <div style="font-size:10px;color:#8b8fa8;">1080p</div>
+          </div>
+          <div style="flex:1;background:#16171d;border:1px solid #252730;border-radius:10px;padding:8px 10px;text-align:center;cursor:pointer;">
+            <div style="font-size:18px;margin-bottom:2px;">🎶</div>
+            <div style="font-size:12px;font-weight:600;color:#f0f0f5;">FLAC</div>
+            <div style="font-size:10px;color:#8b8fa8;">Lossless</div>
+          </div>
+        </div>
+        <!-- Options row under cards -->
+        <div class="m-row">
+          <div class="m-drop">320 kbps ▾</div>
+          <div class="m-toggle on"><span class="dot"></span>SponsorBlock</div>
+          <div class="m-toggle"><span class="dot"></span>Subtitles</div>
+          <div class="m-adv-btn">⚙ More ▾</div>
+        </div>
+      </div>
+
+      <div class="m-content">
+        <div style="color:#8b8fa8;font-size:11px;">Queue / History…</div>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="pros"><div class="pros-title">Pros</div><ul class="pc">
+        <li>Very obvious format selection</li>
+        <li>Beginner-friendly, visual</li>
+        <li>Cards replace preset pills nicely</li>
+      </ul></div>
+      <div class="cons"><div class="cons-title">Cons</div><ul class="pc">
+        <li>Takes vertical space for the cards</li>
+        <li>Limits formats to 3–4 visible</li>
+        <li>Less room for queue on small screens</li>
+      </ul></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  Click an approach to select it, then <strong>tell me your choice in the terminal</strong>.<br>
+  Mix-and-match ideas are welcome — e.g. "A but with the format cards from C".
+</div>
+
+<script>
+function select(el, id) {
+  document.querySelectorAll('.approach').forEach(a => a.classList.remove('selected'));
+  el.classList.add('selected');
+}
+</script>
+</body>
+</html>
